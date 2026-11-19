@@ -1,4 +1,4 @@
-import { renderSignalPlot } from './signal-plot.js?v=2';
+import { renderSignalPlot } from './signal-plot.js?v=3';
 
 // Display-only example coordinates (metres) and signal levels (dBm).
 // 示例仅用于展示，坐标单位为米，信号强度单位为 dBm。
@@ -45,6 +45,7 @@ export function setupSignalMap({ translate: t, exportCsv, scan, stop }) {
   let plotDirty = true;
   let example = new URLSearchParams(location.search).get('map') === 'example';
   let setPlotPosition;
+  let positionEdited = false;
   x.value = y.value = '0';
   let storageFailed = false;
   let lastReading = null;
@@ -113,11 +114,12 @@ export function setupSignalMap({ translate: t, exportCsv, scan, stop }) {
         x.value = east;
         y.value = north;
         finish();
-        setPlotPosition?.(east, north);
+        positionEdited = true;
+        setPlotPosition?.(east, north, true);
         render();
       } : null,
     });
-    setPlotPosition(x.valueAsNumber, y.valueAsNumber);
+    setPlotPosition(x.valueAsNumber, y.valueAsNumber, positionEdited);
     const labelX = t(system() === 'indoor' ? 'mapX' : 'mapLon');
     const labelY = t(system() === 'indoor' ? 'mapY' : 'mapLat');
     byId('x-label').textContent = byId('col-x').textContent = labelX;
@@ -235,9 +237,10 @@ export function setupSignalMap({ translate: t, exportCsv, scan, stop }) {
       finish();
       if (field === radio) { target.value = ''; optionsDirty = true; }
       if (field === position) x.value = y.value = system() === 'indoor' ? '0' : '';
-      if (field === x || field === y) setPlotPosition?.(x.valueAsNumber, y.valueAsNumber);
+      positionEdited = field === x || field === y;
+      if (positionEdited) setPlotPosition?.(x.valueAsNumber, y.valueAsNumber, true);
+      else plotDirty = true;
       if (field === radio || field === target) lastReading = null;
-      if (field !== x && field !== y) plotDirty = true;
       render();
     });
   }

@@ -79,9 +79,9 @@ function niceDistance(limit) {
 
 // Grid lines, compass and scale share the same metres-per-pixel transform as the observations.
 // 网格、方向和比例尺与测点共用同一个米制坐标变换。
-function drawGrid(layer, view) {
+function drawGrid(layer, view, t) {
   const { width, height, scale, px, py, eastAt, northAt } = view;
-  const major = niceDistance(Math.min(135, width / 3) * scale);
+  const major = niceDistance(Math.min(115, width / 4) * scale);
   let path = '';
   const stepPixels = major / scale;
   const firstX = px(Math.ceil(eastAt(0) / major) * major);
@@ -89,10 +89,10 @@ function drawGrid(layer, view) {
   for (let x = firstX; x <= width; x += stepPixels) path += `M${x} 0V${height}`;
   for (let y = firstY; y <= height; y += stepPixels) path += `M0 ${y}H${width}`;
   layer.append(svg('path', { class: 'field-grid', d: path }));
-  const distance = niceDistance(Math.min(100, width / 4) * scale);
-  const label = distance >= 1000 ? `${Number((distance / 1000).toPrecision(3))} km` : `${Number(distance.toPrecision(3))} m`;
-  layer.append(svg('path', { class: 'field-scale', d: `M16 ${height - 18}v4h${distance / scale}v-4` }),
-    svg('text', { class: 'field-axis-label', x: 16, y: height - 23 }, label));
+  const [factor, unit] = major >= 1000 ? [0.001, 'km'] : major >= 1 ? [1, 'm'] : major >= 0.01 ? [100, 'cm'] : [1000, 'mm'];
+  const distance = `${Number((major * factor).toPrecision(3))} ${unit}`;
+  layer.append(svg('path', { class: 'field-scale', d: `M16 ${height - 18}v4h${stepPixels}v-4` }),
+    svg('text', { class: 'field-axis-label', x: 16, y: height - 23 }, t('mapGridDistance', { distance })));
   const compass = svg('g', { transform: `translate(${width - 20} 19)`, 'aria-hidden': true });
   compass.append(svg('text', { class: 'field-axis-label', 'text-anchor': 'middle', y: 0 }, 'N'),
     svg('path', { class: 'field-north', d: 'M0 5l-4 12 4-3 4 3z' }));
@@ -109,28 +109,37 @@ function drawExamplePlan(layer, { px, py }) {
   layer.append(svg('path', { class: 'field-walls', d }));
 }
 
-// The legend covers the recorded levels with at least 30 dB of contrast range.
-// 色标包含各测点读数，并保留至少 30 dB 的跨度。
+// Markers, interpolated values and the legend share the latest measured level at each site.
+// 测点、热区和图例共用各位置最新读数的最小值和最大值。
 function signalDomain(sites) {
-  if (sites.length < 2) return [-100, -20];
-  let low = Infinity, high = -Infinity;
-  for (const { point } of sites) { low = Math.min(low, point.rssi); high = Math.max(high, point.rssi); }
-  const span = Math.max(30, Math.ceil((high - low) / 10) * 10);
-  const min = Math.floor(((low + high - span) / 2) / 5) * 5;
-  return [min, Math.max(min + span, Math.ceil(high / 5) * 5)];
+  if (!sites.length) return null;
+  let low = sites[0].point.rssi, high = low;
+  for (const { point } of sites) {
+    low = Math.min(low, point.rssi);
+    high = Math.max(high, point.rssi);
+  }
+  return [low, high];
 }
 
 function legend(t, domain) {
-  const legend = html('div', 'field-legend');
+  const box = html('div', 'field-legend');
+  if (!domain) return box;
+  const [low, high] = domain;
   const ramp = html('div', 'field-ramp');
-  const level = (fraction) => domain[0] + fraction * (domain[1] - domain[0]);
-  const ticks = [0, .25, .5, .75, 1].map((fraction) => Number(level(fraction).toFixed(1)));
-  ramp.style.backgroundImage = `linear-gradient(90deg, ${Array.from({ length: 21 }, (_, i) => signalColor(level(i / 20), domain)).join(',')})`;
   ramp.setAttribute('aria-hidden', 'true');
   const labels = html('div', 'field-ticks');
-  ticks.forEach((dbm, i) => labels.append(html('span', '', `${i === 0 ? '≤' : i === 4 ? '≥' : ''}${dbm}`)));
-  legend.append(html('strong', '', t('signalPlotLegend')), ramp, labels);
-  return legend;
+  if (low === high) {
+    ramp.style.backgroundColor = signalColor(low, domain);
+    labels.append(html('span', '', String(low)));
+  } else {
+    const span = high - low;
+    const stops = Array.from({ length: 6 }, (_, i) => signalColor(low + span * i / 5, domain));
+    ramp.style.backgroundImage = `linear-gradient(90deg, ${stops.join(',')})`;
+    const ticks = span > 2 ? [low, (low + high) / 2, high] : Array.from({ length: span + 1 }, (_, i) => low + i);
+    for (const tick of ticks) labels.append(html('span', '', String(tick)));
+  }
+  box.append(html('strong', '', t('signalPlotLegend')), ramp, labels);
+  return box;
 }
 
 /** Render the map and return a lightweight setter for the proposed indoor recording position. */
@@ -164,27 +173,44 @@ export function renderSignalPlot(container, points, system, t, { example = false
 
   let selected = sites.at(-1);
   let cursor;
-  let proposed;
+  let proposed = {};
+  let fitProposed = false;
   let view;
-  function moveCursor(east, north) {
-    proposed = { east, north };
+  function positionCursor() {
     if (!cursor || !view) return;
+    const { east, north } = proposed;
     const visible = onPick && [east, north].every(Number.isFinite) &&
       !sites.some((site) => site.east === east && site.north === north);
     cursor.style.display = visible ? '' : 'none';
     if (visible) cursor.setAttribute('transform', `translate(${view.px(east)} ${view.py(north)})`);
   }
-  function draw() {
+  function moveCursor(east, north, typed = false) {
+    const refit = fitProposed || (typed && onPick && (!view || view.px(east) < 14 || view.px(east) > view.width - 14 ||
+      view.py(north) < 14 || view.py(north) > view.height - 14));
+    proposed = { east, north };
+    fitProposed = Boolean(refit && typed && onPick && Number.isFinite(east) && Number.isFinite(north) &&
+      Math.abs(east) <= 1000000 && Math.abs(north) <= 1000000);
+    if (refit) draw(true);
+    else positionCursor();
+  }
+  function draw(force = false) {
     const width = stage.clientWidth;
     const height = stage.clientHeight;
-    if (!width || !height || (view?.width === width && view.height === height)) return;
+    if (!width || !height || (!force && view?.width === width && view.height === height)) return;
     const focus = plot.contains(document.activeElement);
-    let west = sites[0]?.east ?? 0, east = west, south = sites[0]?.north ?? 0, north = south;
+    const anchor = sites[0] || (fitProposed ? proposed : { east: 0, north: 0 });
+    let west = anchor.east, east = west, south = anchor.north, north = south;
     for (const site of sites) {
       west = Math.min(west, site.east); east = Math.max(east, site.east);
       south = Math.min(south, site.north); north = Math.max(north, site.north);
     }
-    const scale = Math.max((east - west) / Math.max(1, width - 100), (north - south) / Math.max(1, height - 92)) || 6 / Math.max(1, height - 92);
+    if (fitProposed) {
+      west = Math.min(west, proposed.east); east = Math.max(east, proposed.east);
+      south = Math.min(south, proposed.north); north = Math.max(north, proposed.north);
+    }
+    const innerWidth = Math.max(1, width - Math.min(100, width * 0.22));
+    const innerHeight = Math.max(1, height - Math.min(92, height * 0.24));
+    const scale = Math.max((east - west) / innerWidth, (north - south) / innerHeight) || 6 / innerHeight;
     const centerX = (west + east) / 2, centerY = (south + north) / 2;
     const px = (x) => width / 2 + (x - centerX) / scale;
     const py = (y) => height / 2 - (y - centerY) / scale;
@@ -195,7 +221,7 @@ export function renderSignalPlot(container, points, system, t, { example = false
     const mode = drawSignalField(field, pixels, width, height, domain);
     figure.dataset.coverage = mode;
     guide.textContent = t({ empty: 'mapFieldEmpty', point: 'mapFieldPoint', line: 'mapFieldLine', area: 'mapFieldArea' }[mode]);
-    drawGrid(plot, view);
+    drawGrid(plot, view, t);
     if (example) drawExamplePlan(plot, view);
     let current;
     const callout = svg('g', { class: 'field-callout', 'aria-hidden': true });
@@ -239,7 +265,7 @@ export function renderSignalPlot(container, points, system, t, { example = false
     cursor = svg('g', { class: 'field-cursor', 'aria-hidden': true });
     cursor.append(svg('circle', { r: 8 }), svg('path', { d: 'M-13 0h7m12 0h7M0 -13v7m0 12v7' }));
     plot.append(cursor);
-    moveCursor(proposed?.east, proposed?.north);
+    positionCursor();
     if (!sites.length) detail.textContent = t(onPick ? 'mapFieldPick' : 'signalPlotEmpty');
   }
   if (onPick) plot.addEventListener('click', (event) => {
@@ -247,11 +273,12 @@ export function renderSignalPlot(container, points, system, t, { example = false
     const rect = plot.getBoundingClientRect();
     const east = view.eastAt((event.clientX - rect.left) * view.width / rect.width);
     const north = view.northAt((event.clientY - rect.top) * view.height / rect.height);
-    onPick(Number(east.toFixed(1)), Number(north.toFixed(1)));
+    const decimals = Math.min(9, Math.max(0, -Math.floor(Math.log10(view.scale * 2))));
+    onPick(Number(east.toFixed(decimals)), Number(north.toFixed(decimals)));
   });
   draw();
   if (typeof ResizeObserver !== 'undefined') {
-    const observer = new ResizeObserver(draw);
+    const observer = new ResizeObserver(() => draw());
     observer.observe(stage);
     observers.set(container, observer);
   }

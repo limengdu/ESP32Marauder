@@ -1,5 +1,5 @@
 import { setupMonitor } from './monitor.js?v=10';
-import { setupSignalMap } from './signal-map.js?v=2';
+import { setupSignalMap } from './signal-map.js?v=3';
 import { hasRadioObservation, setupFunctions } from './functions.js?v=15';
 import { setupCapture } from './capture.js?v=10';
 import { SerialPcapDecoder } from './pcap.js?v=10';
