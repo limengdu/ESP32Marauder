@@ -2,7 +2,7 @@
 
 Carry a Seeed Studio XIAO ESP32-C5 from the doorway to your desk and measure how the Wi-Fi signal changes along the way. This fork pairs Marauder firmware with a local browser console. The board takes the readings and sends them over USB. In the console you can map Wi-Fi or Bluetooth Low Energy (BLE) coverage, compare 2.4 GHz with 5 GHz, and watch how movement affects a Wi-Fi link. The interface is available in English and Simplified Chinese.
 
-![Simulated floor plan with 14 sampling locations. The selected point on the brighter left side reads −41 dBm.](pictures/xiao-console/coverage.png)
+![Simulated floor plan with 14 sampling locations. The selected point on the brighter left side reads −41 dBm.](https://raw.githubusercontent.com/limengdu/ESP32Marauder/69c495866b78a5169bfb8f2f325a7f3f1ef25b65/pictures/xiao-console/coverage.png)
 
 *Built-in example with 14 simulated readings. Each dot marks a sampling location. Brighter areas show stronger reception, and the shading between dots estimates coverage. The grid outside the sampled area stays empty.*
 
@@ -30,7 +30,7 @@ The grid scale adjusts to the distance between locations. The colour scale spans
 
 Open **Dual-band survey** and run **Start dual-band survey**. Each row groups readings by Wi-Fi name and shows the signal strength and channel on each band. If several access points use the same name on one band, the table shows the strongest one observed on that band.
 
-![Example survey table. Demo-Studio is stronger on 5 GHz, Demo-Loft is stronger on 2.4 GHz, and Demo-Sensor was seen only on 2.4 GHz.](pictures/xiao-console/dual-band.png)
+![Example survey table. Demo-Studio is stronger on 5 GHz, Demo-Loft is stronger on 2.4 GHz, and Demo-Sensor was seen only on 2.4 GHz.](https://raw.githubusercontent.com/limengdu/ESP32Marauder/69c495866b78a5169bfb8f2f325a7f3f1ef25b65/pictures/xiao-console/dual-band.png)
 
 *Simulated survey. Demo-Studio reads −43 dBm on 5 GHz and −54 dBm on 2.4 GHz, so 5 GHz is 11 dB stronger here. Click **Save this spot** and scan again in another room. The `+3` beside the 5 GHz reading means it gained 3 dB since the saved survey.*
 
@@ -41,7 +41,7 @@ Channel state information (CSI) describes how a Wi-Fi signal travels between the
 - **Passive listening (no password).** Keep the board and its surroundings still for about 30 seconds to establish a baseline, then walk between the board and the router. For a hidden network, you can enter its radio address (BSSID) and channel.
 - **Gateway self-test (60 seconds).** To check that samples are coming through, choose a network already saved on the board. During the test, the board sends ordinary pings to its gateway. Keep still for the first 30 seconds, then walk through the link. The last curve stays visible when the test ends.
 
-![Recorded gateway self-test on a XIAO ESP32-C5. The curve starts after calibration and shows two peaks. The final motion score is 2 at 5 samples per second.](pictures/xiao-console/csi-self-test.png)
+![Recorded gateway self-test on a XIAO ESP32-C5. The curve starts after calibration and shows two peaks. The final motion score is 2 at 5 samples per second.](https://raw.githubusercontent.com/limengdu/ESP32Marauder/69c495866b78a5169bfb8f2f325a7f3f1ef25b65/pictures/xiao-console/csi-self-test.png)
 
 *Recorded on hardware. A **SAMPLES/S** value above zero means samples are arriving. Under **MOTION**, a dash means the board has no usable score yet, while `0` is a valid score. This run ended at 5 samples per second with a motion score of 2.*
 
