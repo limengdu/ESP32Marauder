@@ -11,8 +11,11 @@
 class CsiMotionMonitor {
  public:
   bool start(const uint8_t target[6], const String& name, uint8_t channel);
+  #if defined(CONFIG_IDF_TARGET_ESP32C5)
+    bool startGatewayTest(const uint8_t target[6], const String& name, uint8_t channel);
+  #endif
   void stop();
-  void main(uint32_t now_ms);
+  void main();
   bool active() const { return active_; }
   void recalibrate();
   void printStatus(bool force = true);
@@ -42,7 +45,17 @@ class CsiMotionMonitor {
 
   static void callback(void* context, wifi_csi_info_t* info);
   void enqueue(wifi_csi_info_t* info);
+  bool startSession(const uint8_t target[6], const String& name, uint8_t channel);
   bool takeWiFi();
+  bool enableCSI();
+  #if defined(CONFIG_IDF_TARGET_ESP32C5)
+    bool startGatewayPing();
+    bool gateway_test_ = false;
+    bool test_station_owned_ = false;
+    wifi_ps_type_t saved_ps_ = WIFI_PS_MIN_MODEM;
+    void* ping_session_ = nullptr;
+    uint32_t test_started_ms_ = 0;
+  #endif
   void releaseWiFi();
   void draw(uint32_t now_ms);
   void drawGraph();
@@ -58,6 +71,16 @@ class CsiMotionMonitor {
   volatile uint8_t read_index_ = 0;
   volatile uint32_t accepted_ = 0;
   volatile uint32_t dropped_ = 0;
+  #if defined(CONFIG_IDF_TARGET_ESP32C5)
+    static void countRadioFrame(void* buffer, wifi_promiscuous_pkt_type_t type);
+    volatile uint32_t raw_callbacks_ = 0;
+    volatile uint32_t target_other_ = 0;
+    volatile uint32_t target_11b_ = 0;
+    volatile uint32_t downlink_ = 0;
+    volatile uint32_t uplink_ = 0;
+    volatile uint32_t target_callbacks_ = 0;
+    volatile int8_t secondary_offset_ = -1;
+  #endif
   Target* targets_ = nullptr;
   uint16_t target_count_ = 0;
   uint16_t active_target_count_ = 0;

@@ -95,7 +95,9 @@ uint8_t CsiMotionModel::calibrationPercent(uint32_t now_ms) const {
 void CsiMotionModel::addSample(const int8_t* bytes, size_t length, int8_t rssi,
                                uint32_t now_ms, bool first_word_invalid,
                                SampleEncoding encoding) {
-  if (!bytes || length < 16) return;
+  // Only accumulate samples belonging to the open window or a later one.
+  // 只累计当前窗口及其之后的样本。
+  if (!bytes || length < 16 || static_cast<int32_t>(now_ms - window_started_ms_) < 0) return;
   const bool legacy = encoding == SampleEncoding::SIGNED_8_IMAG_REAL;
   size_t scalar_count = legacy ? length : length / 2;
   scalar_count &= ~static_cast<size_t>(1);

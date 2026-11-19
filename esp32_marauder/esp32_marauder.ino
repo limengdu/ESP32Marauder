@@ -537,7 +537,7 @@ void loop()
   wifi_scan_obj.main(currentTime);
   recon_obj.main(currentTime);
   #if defined(HAS_CSI_MOTION)
-    csi_motion_obj.main(currentTime);
+    csi_motion_obj.main();
   #endif
 
   #ifdef HAS_T_DONGLE_DISPLAY

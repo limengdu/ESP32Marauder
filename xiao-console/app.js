@@ -1,7 +1,7 @@
-import { setupMonitor } from './monitor.js?v=8';
-import { setupFunctions } from './functions.js?v=8';
-import { setupCapture } from './capture.js?v=8';
-import { SerialPcapDecoder } from './pcap.js?v=8';
+import { setupMonitor } from './monitor.js?v=10';
+import { hasRadioObservation, setupFunctions } from './functions.js?v=14';
+import { setupCapture } from './capture.js?v=10';
+import { SerialPcapDecoder } from './pcap.js?v=10';
 
 const BAUD_RATE = 115200;
 const USB_FILTERS = [{ usbVendorId: 0x303a }, { usbVendorId: 0x2886 }];
@@ -19,6 +19,16 @@ const BLE_LIST_LINE = /^\[(\d+)\]\[RSSI:(-?\d+)\] (.*)$/;
 const INFO_LINE = /^\s*(ESSID|BSSID|Channel|RSSI|Frames|Stations|Brand|Security): ?(.*)$/;
 const IPV4_LINE = /^\d{1,3}(?:\.\d{1,3}){3}$/;
 const LAN_LIST_LINE = /^\[(\d+)\]\s+(\d{1,3}(?:\.\d{1,3}){3})$/;
+const MOTION_HISTORY_LIMIT = 180;
+const CSI_START_FAILED = /^(?:Invalid AP index|CSI motion (?:needs|could not|start failed))/;
+const CSI_SELF_TEST_END = /^CSI self-test (complete\b|failed:)(.*)$/;
+const BAND_TIE_DB = 3;
+const MOTION_PLOT = { left: 8, right: 632, top: 16, bottom: 156, width: 640, height: 180 };
+const MOTION_BADGE = {
+  STILL: 'online', MOTION: 'motion', POSSIBLE: 'waiting', CALIBRATING: 'waiting',
+  'LOW DATA': 'error', UNKNOWN: 'waiting',
+};
+const MOTION_STATES = new Set(Object.keys(MOTION_BADGE));
 const BOOT_LINE = /^(?:ESP-ROM:|rst:0x|ESP-IDF version is:)/;
 const VERSION_LINE = /^\s*(v\d+\.\d+\.\d+\S*)\s*$/;
 
@@ -110,7 +120,11 @@ const state = {
   commandHistory: [],
   bluetooth: new Map(),
   historyIndex: 0,
+  motionSelfTest: false,
   motionReading: '',
+  motionSample: null,
+  motionHistory: [],
+  bandSnapshot: null,
   signalReading: '',
 };
 
@@ -365,7 +379,7 @@ function renderStatus() {
   elements['refresh-results'].disabled = !ready || state.busy || task !== 'idle';
   elements['export-results'].disabled = !state.networks.size;
   document.getElementById('export-bluetooth').disabled = !state.bluetooth.size;
-  functions.update({ ready, busy: state.busy, task, taskKind: state.taskKind, gps: state.gps, networks: state.networks });
+  functions.update({ ready, busy: state.busy, task, taskKind: state.taskKind, gps: state.gps, networks: state.networks, wifiConnected: state.wifiStatus?.state === 'connected', wifiSsid: state.wifiStatus?.ssid ?? '' });
   elements['motion-reading'].textContent = state.motionReading || t('waitingReading');
   elements['signal-reading'].textContent = state.signalReading || t('waitingReading');
   renderWifiStatus(ready);
@@ -498,11 +512,340 @@ function renderBluetooth() {
   }));
 }
 
+/**
+ * Read one CSI status line into a motion sample.
+ * 把一行 CSI 状态读成一条动作样本。
+ */
+function parseCsi(line) {
+  if (!line.startsWith('CSI motion |')) return null;
+  const fields = {};
+  for (const part of line.split(' | ').slice(1)) {
+    const cut = part.indexOf('=');
+    if (cut > 0) fields[part.slice(0, cut)] = part.slice(cut + 1);
+  }
+  const motion = Number(fields.motion);
+  const rate = Number(String(fields.rate ?? '').replace('/s', ''));
+  const state = MOTION_STATES.has(fields.state) ? fields.state : 'UNKNOWN';
+  if (!Number.isFinite(motion)) return null;
+  return {
+    state,
+    motion,
+    scored: ['STILL', 'POSSIBLE', 'MOTION'].includes(state) && rate > 0,
+    reliability: Number(fields.reliability),
+    rate,
+    calibration: Number(String(fields.calibration ?? '').replace('%', '')),
+    ap: (fields.AP ?? '').replace(/^"|"$/g, ''),
+    channel: Number(fields.channel),
+    targetFrames: Number(fields.target_frames),
+    legacyFrames: Number(fields.legacy_11b),
+    allCallbacks: Number(fields.csi_callbacks),
+    targetCallbacks: Number(fields.target_csi),
+    at: Date.now(),
+  };
+}
+
+/**
+ * Keep the newest motion samples for the live chart.
+ * 保留最新的动作样本，供实时曲线使用。
+ */
+function pushMotionSample(sample) {
+  const last = state.motionHistory.at(-1);
+  if (last && sample.at - last.at < 400 && last.scored === sample.scored && last.motion === sample.motion && last.state === sample.state) return;
+  state.motionSample = sample;
+  state.motionHistory.push(sample);
+  if (state.motionHistory.length > MOTION_HISTORY_LIMIT) state.motionHistory.shift();
+}
+
+/**
+ * Map a sample index and score onto the chart view box.
+ * 把样本序号和分数映射到曲线图的坐标。
+ */
+function motionPoint(index, count, value) {
+  const x = count <= 1
+    ? (MOTION_PLOT.left + MOTION_PLOT.right) / 2
+    : MOTION_PLOT.left + (index / (count - 1)) * (MOTION_PLOT.right - MOTION_PLOT.left);
+  const clamped = Math.max(0, Math.min(100, value));
+  const y = MOTION_PLOT.bottom - (clamped / 100) * (MOTION_PLOT.bottom - MOTION_PLOT.top);
+  return [x, y];
+}
+
+/**
+ * Place a chart marker over the SVG as it is drawn on screen.
+ * 把标记放到屏幕上实际画出的曲线位置。
+ */
+function motionNode(id) {
+  return document.getElementById(id);
+}
+
+/**
+ * Place a chart marker over the SVG as it is drawn on screen.
+ * 把标记放到屏幕上实际画出的曲线位置。
+ */
+function placeMotionMarker(marker, x, y) {
+  const chart = motionNode('motion-chart').getBoundingClientRect();
+  const canvas = document.querySelector('.motion-canvas').getBoundingClientRect();
+  if (!chart.width || !canvas.width) return;
+  marker.style.left = `${chart.left - canvas.left + (x / MOTION_PLOT.width) * chart.width}px`;
+  marker.style.top = `${chart.top - canvas.top + (y / MOTION_PLOT.height) * chart.height}px`;
+}
+
+let motionHoverRatio = null;
+
+/**
+ * Draw the motion score for the current sensing session.
+ * 画出当前感应过程的动作分数。
+ */
+function motionStateLabel(stateName) {
+  const key = stateName === 'LOW DATA' ? 'motionStateLOW_DATA' : `motionState${stateName}`;
+  const label = t(key);
+  return label === key ? t('motionStateUNKNOWN') : label;
+}
+
+/**
+ * Draw each run of usable scores and leave a break where samples are missing.
+ * 把每段有效分数画出来，缺样本的位置留空。
+ */
+function motionPaths(samples) {
+  const line = [];
+  const area = [];
+  let run = [];
+  const closeRun = () => {
+    if (!run.length) return;
+    line.push(`M ${run.map(([x, y]) => `${x} ${y}`).join(' L ')}`);
+    area.push(`M ${run[0][0]} ${MOTION_PLOT.bottom} L ${run.map(([x, y]) => `${x} ${y}`).join(' L ')} L ${run.at(-1)[0]} ${MOTION_PLOT.bottom} Z`);
+    run = [];
+  };
+  samples.forEach((sample, index) => {
+    if (!sample.scored) {
+      closeRun();
+      return;
+    }
+    run.push(motionPoint(index, samples.length, sample.motion));
+  });
+  closeRun();
+  return { line: line.join(' '), area: area.join(' ') };
+}
+
+/**
+ * Choose the next sentence for the current sensing step.
+ * 按当前感应步骤选择下一句提示。
+ */
+function motionGuide(latest) {
+  if (state.connection !== 'ready') return t('motionConnect');
+  if (state.taskKind !== 'csi') {
+    if (latest) return t('motionLastReading');
+    return t('motionWaiting');
+  }
+  if (!latest) return t('motionAwaitReading');
+  if (latest.state === 'CALIBRATING' && latest.rate > 0) return t('motionCalibrating', { percent: latest.calibration });
+  if (latest.rate === 0 && latest.allCallbacks > 0 && latest.targetCallbacks === 0) {
+    return t('motionOtherCsi', { channel: latest.channel });
+  }
+  if (latest.rate === 0 && latest.targetFrames > 0) {
+    return t(latest.legacyFrames === latest.targetFrames ? 'motionLegacyOnly' : 'motionRadioSeen', { count: latest.targetFrames, channel: latest.channel });
+  }
+  if (!latest.scored) return t(latest.rate > 0 ? 'motionNoScore' : 'motionNoData');
+  return t('motionReady', { state: motionStateLabel(latest.state), ap: latest.ap, channel: latest.channel });
+}
+
+function renderMotion() {
+  const samples = state.motionHistory;
+  const latest = state.motionSample;
+  const paths = motionPaths(samples);
+  motionNode('motion-line').setAttribute('d', paths.line);
+  motionNode('motion-area').setAttribute('d', paths.area);
+  const lastScored = [...samples].reverse().find((sample) => sample.scored);
+  const dot = motionNode('motion-dot');
+  if (lastScored) {
+    const [x, y] = motionPoint(samples.lastIndexOf(lastScored), samples.length, lastScored.motion);
+    dot.hidden = false;
+    placeMotionMarker(dot, x, y);
+  } else dot.hidden = true;
+
+  const badge = motionNode('motion-state');
+  badge.className = `badge${latest ? ` ${MOTION_BADGE[latest.state] ?? 'waiting'}` : ''}`;
+  badge.textContent = latest && state.taskKind !== 'csi' ? t('motionHistoryLabel') : latest ? motionStateLabel(latest.state) : '—';
+  const score = latest?.scored ? String(latest.motion) : '—';
+  motionNode('motion-score').textContent = score;
+  motionNode('motion-reliability').textContent = latest?.scored ? String(latest.reliability) : '—';
+  motionNode('motion-rate').textContent = latest ? String(latest.rate) : '—';
+  motionNode('motion-calibration').textContent = latest ? `${latest.calibration}%` : '—';
+  const calibrating = latest?.state === 'CALIBRATING';
+  motionNode('motion-cal').hidden = !calibrating;
+  if (calibrating) motionNode('motion-cal-fill').style.width = `${Math.max(0, Math.min(100, latest.calibration))}%`;
+  motionNode('motion-summary').textContent = motionGuide(latest);
+  const stop = motionNode('motion-stop');
+  stop.hidden = state.taskKind !== 'csi';
+  stop.disabled = state.busy || state.connection !== 'ready';
+  renderMotionHover();
+}
+
+/**
+ * Show the sample under the pointer.
+ * 显示指针所在位置的样本。
+ */
+function renderMotionHover() {
+  const samples = state.motionHistory;
+  const tip = motionNode('motion-tip');
+  const cross = motionNode('motion-cross');
+  if (motionHoverRatio == null || !samples.length) {
+    tip.hidden = true;
+    cross.hidden = true;
+    return;
+  }
+  const canvas = document.querySelector('.motion-canvas').getBoundingClientRect();
+  const chart = motionNode('motion-chart').getBoundingClientRect();
+  if (!chart.width || !canvas.width) {
+    tip.hidden = true;
+    cross.hidden = true;
+    return;
+  }
+  const localX = motionHoverRatio * canvas.width - (chart.left - canvas.left);
+  const ratio = Math.max(0, Math.min(1, localX / chart.width));
+  const index = Math.round(ratio * (samples.length - 1));
+  const sample = samples[index];
+  const [x] = motionPoint(index, samples.length, sample.scored ? sample.motion : 0);
+  cross.hidden = false;
+  placeMotionMarker(cross, x, MOTION_PLOT.top);
+  tip.hidden = false;
+  const tipLeft = chart.left - canvas.left + (x / MOTION_PLOT.width) * chart.width;
+  tip.style.left = `${Math.min(canvas.width - 90, Math.max(90, tipLeft))}px`;
+  tip.textContent = sample.scored
+    ? t('motionTip', {
+      time: new Date(sample.at).toLocaleTimeString(state.locale, { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      state: motionStateLabel(sample.state),
+      motion: sample.motion,
+      reliability: sample.reliability,
+    })
+    : t('motionGapTip', {
+      time: new Date(sample.at).toLocaleTimeString(state.locale, { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      rate: sample.rate,
+    });
+}
+
+/**
+ * Group named networks and keep the strongest signal on each band.
+ * 按网络名称分组，并保留每个频段上最强的信号。
+ */
+function bandGroups() {
+  const groups = new Map();
+  for (const network of state.networks.values()) {
+    if (network.hidden || !network.name || !network.channel) continue;
+    const key = network.name.trim().toLowerCase();
+    const group = groups.get(key) ?? { key, name: network.name, band24: null, band5: null };
+    const slot = network.channel > 14 ? 'band5' : 'band24';
+    if (!group[slot] || network.rssi > group[slot].rssi) group[slot] = { rssi: network.rssi, channel: network.channel };
+    groups.set(key, group);
+  }
+  return [...groups.values()].sort((a, b) => {
+    const bothA = a.band24 && a.band5 ? 1 : 0;
+    const bothB = b.band24 && b.band5 ? 1 : 0;
+    if (bothA !== bothB) return bothB - bothA;
+    const best = (group) => Math.max(group.band24?.rssi ?? -200, group.band5?.rssi ?? -200);
+    return best(b) - best(a);
+  });
+}
+
+/**
+ * Describe which band is stronger for one network name.
+ * 说明同一个网络名称在哪个频段上更强。
+ */
+function bandWinner(group) {
+  if (group.band24 && group.band5) {
+    const delta = group.band5.rssi - group.band24.rssi;
+    if (Math.abs(delta) < BAND_TIE_DB) return 'bandTie';
+    return delta > 0 ? 'band5Stronger' : 'band24Stronger';
+  }
+  return group.band5 ? 'bandOnly5' : 'bandOnly24';
+}
+
+/**
+ * Build one band cell with its signal, channel and saved-spot change.
+ * 生成一个频段单元格，包含信号、频道和相对已记录位置的变化。
+ */
+function bandCell(reading, saved) {
+  const wrap = document.createElement('div');
+  wrap.className = 'band-cell';
+  if (!reading) {
+    wrap.classList.add('is-missing');
+    wrap.textContent = '—';
+    return wrap;
+  }
+  const pill = document.createElement('span');
+  pill.className = `signal-pill ${signalTone(reading.rssi)}`;
+  pill.textContent = `${reading.rssi} dBm`;
+  const channel = document.createElement('span');
+  channel.className = 'band-ch';
+  channel.textContent = t('bandChannel', { channel: reading.channel });
+  wrap.append(pill, channel);
+  if (Number.isFinite(saved)) {
+    const delta = reading.rssi - saved;
+    const note = document.createElement('span');
+    note.className = `band-delta${delta > 0 ? ' up' : delta < 0 ? ' down' : ''}`;
+    note.textContent = `(${delta > 0 ? '+' : ''}${delta})`;
+    wrap.append(note);
+  }
+  return wrap;
+}
+
+/**
+ * Render the same-name comparison for the two Wi-Fi bands.
+ * 渲染同名网络在两个 Wi-Fi 频段上的对比。
+ */
+function renderBandCompare() {
+  const groups = bandGroups();
+  const hasGroups = groups.length > 0;
+  motionNode('band-compare').hidden = !hasGroups;
+  motionNode('band-compare-empty').hidden = hasGroups;
+  motionNode('save-band-snapshot').disabled = !hasGroups;
+  motionNode('clear-band-snapshot').hidden = !state.bandSnapshot;
+  const both = groups.filter((group) => group.band24 && group.band5).length;
+  const note = motionNode('band-snapshot-note');
+  note.hidden = !hasGroups;
+  if (hasGroups) {
+    const summary = t('bandCompareSummary', {
+      both,
+      only24: groups.filter((group) => group.band24 && !group.band5).length,
+      only5: groups.filter((group) => group.band5 && !group.band24).length,
+    });
+    note.textContent = state.bandSnapshot
+      ? `${summary} ${t('bandSnapshotNote', { time: new Date(state.bandSnapshot.at).toLocaleTimeString(state.locale, { hour: '2-digit', minute: '2-digit' }) })}`
+      : summary;
+  }
+  const saved = state.bandSnapshot?.rows;
+  motionNode('band-compare-rows').replaceChildren(...groups.map((group) => {
+    const row = document.createElement('div');
+    row.className = 'band-row';
+    const name = document.createElement('div');
+    name.className = 'band-name';
+    name.textContent = group.name;
+    name.title = group.name;
+    const winner = document.createElement('div');
+    winner.className = 'band-winner';
+    winner.textContent = t(bandWinner(group));
+    const previous = saved?.get(group.key);
+    row.append(
+      name,
+      bandCell(group.band24, previous?.rssi24),
+      bandCell(group.band5, previous?.rssi5),
+      winner,
+    );
+    return row;
+  }));
+}
+
 function render() {
   renderStatus();
   renderNetworks();
   renderDetails();
   renderBluetooth();
+  renderBandCompare();
+  renderMotion();
+}
+
+function renderSoon() {
+  render();
+  requestAnimationFrame(renderMotion);
 }
 
 /**
@@ -522,10 +865,10 @@ async function sendCommand(command, { echo = true, logText = command } = {}) {
 }
 
 /**
- * Wait for the echoed command and its closing prompt.
- * 等待命令回显及其结束提示符。
+ * Wait for the command prompt or a specified asynchronous firmware reply.
+ * 等待命令提示符或指定的异步固件回显。
  */
-async function executeCommand(command, { timeout = COMMAND_TIMEOUT_MS, echo = true, logText = command } = {}) {
+async function executeCommand(command, { timeout = COMMAND_TIMEOUT_MS, echo = true, logText = command, joinSsid, untilLine } = {}) {
   if (!state.writer) throw new Error('The serial port is closed');
   if (state.waiter) throw new Error('Another command is pending');
   let echoed = state.taskKind === 'gps' && command === 'stopscan';
@@ -535,15 +878,16 @@ async function executeCommand(command, { timeout = COMMAND_TIMEOUT_MS, echo = tr
   const response = new Promise((resolve) => {
     const waiter = {
       match(event) {
-        if (event.type === 'prompt') return echoed;
+        if (event.type === 'prompt') return echoed && !untilLine;
         const stopEcho = command === 'stopscan' && (event.line.includes('#stopscan') || /^(?:Stopping (?:WiFi|GPS)|END OF NMEA STREAM)/.test(event.line));
         if (event.line === `#${command}` || event.line === `#${logText}` || event.line.endsWith(`> #${command}`) || stopEcho) {
           echoed = true;
           if (stopEcho && !event.line.endsWith('#stopscan') && lines.length < LOG_LIMIT) lines.push(event.line);
           return false;
         }
-        if (echoed && lines.length < LOG_LIMIT) lines.push(event.line);
-        return false;
+        const finished = untilLine?.(event.line);
+        if ((echoed || finished) && lines.length < LOG_LIMIT) lines.push(event.line);
+        return finished;
       },
       resolve(value) {
         if (state.waiter !== waiter) return;
@@ -552,7 +896,11 @@ async function executeCommand(command, { timeout = COMMAND_TIMEOUT_MS, echo = tr
         resolve(value);
       },
     };
-    const timer = setTimeout(() => waiter.resolve(false), timeout);
+    const timer = setTimeout(() => {
+      // An acknowledged join can proceed to the separate IP check after a missing prompt.
+      // 入网命令已确认目标时，即使结束提示符缺失也可继续核实 IP。
+      waiter.resolve(echoed && joinSsid && lines.includes(`Using SSID: ${joinSsid}`));
+    }, timeout);
     state.waiter = waiter;
     sendCommand(command, { echo, logText }).then((sent) => { if (!sent) waiter.resolve(false); });
   });
@@ -739,8 +1087,14 @@ function handleLine(rawLine, logOffset = 0) {
     state.expectVersion = false;
   }
   const scanStarted = /^(?:Scanning for APs and Stations\.|Starting.*\. Stop with |Getting GPS Data\.|CSI motion started:)/;
-  if (state.task === 'startingScan' && scanStarted.test(line)) {
+  const started = state.motionSelfTest ? line.startsWith('CSI motion started:') : scanStarted.test(line);
+  if (state.task === 'startingScan' && started) {
     const now = Date.now();
+    if (state.taskKind === 'csi') {
+      state.motionReading = '';
+      state.motionSample = null;
+      state.motionHistory = [];
+    }
     if (WIFI_LIVE_TASKS.has(state.taskKind)) {
       state.scanStartedAt = now;
       state.networks.clear();
@@ -753,7 +1107,21 @@ function handleLine(rawLine, logOffset = 0) {
     }
     state.task = 'scanning';
   }
-  if ((state.taskKind === 'csi' || state.currentCommand === 'csimotion status') && line.startsWith('CSI motion |')) state.motionReading = line;
+  const selfTestEnd = state.motionSelfTest && line.match(CSI_SELF_TEST_END);
+  if (selfTestEnd) {
+    stopScanTimer();
+    state.scanDuration = 0;
+    state.scanEndsAt = 0;
+    state.task = 'idle';
+    state.taskKind = '';
+    state.motionSelfTest = false;
+    showNotice(selfTestEnd[1] === 'complete' ? 'motionSelfTestComplete' : 'motionSelfTestFailed', { reason: selfTestEnd[2].trim() });
+  }
+  if (line.startsWith('CSI motion |')) {
+    state.motionReading = line;
+    const sample = parseCsi(line);
+    if (sample && (state.taskKind === 'csi' || state.currentCommand === 'csimotion status')) pushMotionSample(sample);
+  }
   if (state.taskKind === 'signal' && / RSSI: -?\d+$/.test(line)) state.signalReading = line;
   const tryingWifi = line.match(/^(?:Using SSID|Trying saved WiFi): (.*)$/);
   if (tryingWifi && state.wifiStatus?.state === 'connecting') state.wifiStatus.ssid = tryingWifi[1].trim();
@@ -798,7 +1166,7 @@ function scheduleRender() {
   renderScheduled = true;
   requestAnimationFrame(() => {
     renderScheduled = false;
-    render();
+    renderSoon();
   });
 }
 
@@ -967,7 +1335,11 @@ function resetDeviceResults() {
   state.scanDuration = 0;
   state.scanEndsAt = 0;
   state.selectedNetwork = '';
+  state.motionSelfTest = false;
   state.motionReading = '';
+  state.motionSample = null;
+  state.motionHistory = [];
+  state.bandSnapshot = null;
   state.signalReading = '';
   state.info = null;
   state.infoIndex = null;
@@ -1072,6 +1444,7 @@ async function stopScan() {
       const lines = await executeCommand('stopscan', { timeout: 8000 });
       if (!lines.some((line) => /^(?:Stopping (?:WiFi|GPS)|END OF NMEA STREAM)/.test(line))) throw new Error(t('stopUnconfirmed'));
     } catch (error) {
+      if (session === state.session && kind === 'csi' && state.task === 'idle') return;
       if (session === state.session) {
         clearTimeout(captureTimer);
         stopScanTimer();
@@ -1108,6 +1481,7 @@ async function stopScan() {
     state.scanEndsAt = 0;
     state.task = 'idle';
     state.taskKind = '';
+    state.motionSelfTest = false;
     if (kind === 'wifi' || kind === 'dual') await readResults();
     else if (kind === 'beacon') {
       // `sniffbeacon` streams beacons over serial without writing to firmware `list -a`.
@@ -1239,10 +1613,14 @@ async function startCapture({ bssid, mode, duration }) {
  * Confirm a device index still refers to the access point selected in the UI.
  * 确认固件编号仍然对应界面上选择的接入点。
  */
-async function checkNetwork(index, bssid) {
+async function checkNetwork(index, bssid, observedOnly = false) {
   const lines = await executeCommand(`info -a ${index}`, { echo: false });
-  const address = lines.find((line) => /^\s*BSSID:/.test(line))?.split(/BSSID:\s*/)[1];
-  if (address?.trim().toLowerCase() !== bssid) throw new Error(t('captureNetworkChanged'));
+  const details = Object.fromEntries(lines.map((line) => line.match(INFO_LINE)).filter(Boolean).map(([, key, value]) => [key, value.trim()]));
+  if (details.BSSID?.toLowerCase() !== bssid) throw new Error(t('captureNetworkChanged'));
+  if (observedOnly && !hasRadioObservation({ rssi: Number(details.RSSI), frames: Number(details.Frames) })) {
+    throw new Error(t('motionScanRequired'));
+  }
+  return details;
 }
 
 /**
@@ -1412,9 +1790,12 @@ async function joinWifi(operation) {
         }
       }
     }
-    const lines = await executeCommand(`join -a ${index} -p ${operation.quotedPassword}`, {
+    // The CLI retains an empty quoted password between arguments.
+    const joinCommand = operation.quotedPassword === '""' ? `join -p "" -a ${index}` : `join -a ${index} -p ${operation.quotedPassword}`;
+    const lines = await executeCommand(joinCommand, {
       timeout: operation.timeout ?? 25000,
       logText: `join -a ${index} -p [redacted]`,
+      joinSsid: operation.ssid,
     });
     const failed = lines.some((line) => line.includes('Could not connect to WiFi network') || line.includes('You did not provide the proper args'));
     if (failed) {
@@ -1472,6 +1853,19 @@ async function joinSavedWifi(operation) {
   showNotice(state.wifiStatus.ip ? 'lanJoinDoneWithIp' : 'lanJoinDone', { ssid, ip: state.wifiStatus.ip });
 }
 
+/** Register an explicitly supplied radio target and verify its address and channel on the board. */
+async function motionRadioIndex({ bssid, channel, quotedSsid }) {
+  const lines = await executeCommand(`add -a -b ${bssid} -ch ${channel}${quotedSsid ? ` -e ${quotedSsid}` : ''}`);
+  const added = lines.map((line) => line.match(/^Added AP \[(\d+)\]\[CH:\d+\] .* \(selected\)$/)).find(Boolean);
+  const existing = lines.map((line) => line.match(/^AP already exists at \[(\d+)\]:/)).find(Boolean);
+  if (!added && !existing) throw new Error(t('motionRegisterFailed'));
+  const index = Number((added ?? existing)[1]);
+  if (added) await executeCommand(`select -a ${index}`, { echo: false });
+  const details = await checkNetwork(index, bssid);
+  if (Number(details.Channel) !== channel) throw new Error(t('motionChannelChanged', { channel: details.Channel }));
+  return index;
+}
+
 const WIFI_RAW_SCAN_TASKS = new Set(['wifi', 'dual', 'beacon', 'observe', 'csi', 'signal']);
 
 async function runAction(command, operation = {}) {
@@ -1483,9 +1877,22 @@ async function runAction(command, operation = {}) {
     if (operation.action === 'resync') return resync();
     if (operation.action === 'joinWifi') return joinWifi(operation);
     if (command === 'join -s') return joinSavedWifi(operation);
+    const currentWifi = command === 'csimotion connected';
+    if (currentWifi) {
+      const help = await executeCommand('csimotion', { echo: false });
+      if (!help.some((line) => /^csimotion\b.*\bconnected\b/.test(line))) throw new Error(t('motionConnectedUnsupported'));
+      if (operation.join) await joinWifi(operation.join);
+      if (state.wifiStatus?.state !== 'connected') return;
+      showNotice('');
+    }
+    const selfTest = command === 'csimotion selftest';
+    if (operation.radioTarget) {
+      const index = await motionRadioIndex(operation.radioTarget);
+      command = selfTest ? `csimotion selftest ${index} ${operation.radioTarget.quotedSsid}` : `csimotion start ${index}`;
+    }
     const index = operation.network ? state.networks.get(operation.network)?.index : null;
     if (operation.network && !Number.isInteger(index)) throw new Error(t('captureNetworkChanged'));
-    if (operation.network && !command.startsWith('info -a ')) await checkNetwork(index, operation.network);
+    if (operation.network && !command.startsWith('info -a ')) await checkNetwork(index, operation.network, operation.field?.observedOnly);
     if (command === 'list -b') state.bluetooth.clear();
     if (command === 'list -a') state.listEntries.clear();
     if (command === 'list -i') {
@@ -1493,7 +1900,6 @@ async function runAction(command, operation = {}) {
       state.lanHostsChecked = true;
     }
     if (command.startsWith('info -a ')) { state.infoIndex = index; state.info = null; }
-    if (operation.task === 'csi') state.motionReading = '';
     if (operation.task === 'signal') state.signalReading = '';
     if (operation.task === 'lan') {
       state.lanHosts.clear();
@@ -1501,7 +1907,7 @@ async function runAction(command, operation = {}) {
     }
     const duration = operation.task && Number(operation.duration) > 0 ? Number(operation.duration) : 0;
     try {
-      if (operation.task && WIFI_RAW_SCAN_TASKS.has(operation.task) && state.wifiStatus?.state === 'connected') {
+      if (operation.task && WIFI_RAW_SCAN_TASKS.has(operation.task) && state.wifiStatus?.state === 'connected' && !currentWifi && !selfTest) {
         await releaseWifiConnection();
       }
       if (operation.action === 'dual') await setUpDualBand();
@@ -1511,10 +1917,25 @@ async function runAction(command, operation = {}) {
         state.scanDuration = duration;
         state.scanEndsAt = 0;
         state.taskKind = operation.task;
+        state.motionSelfTest = selfTest;
         state.task = 'startingScan';
         render();
       }
-      const lines = await executeCommand(command, { timeout: operation.timeout ?? 8000, logText: operation.redactedCommand ?? command });
+      const lines = await executeCommand(command, {
+        timeout: selfTest ? 20000 : operation.timeout ?? 8000,
+        logText: operation.redactedCommand ?? command,
+        untilLine: selfTest ? (line) => line.startsWith('CSI motion started:') || CSI_SELF_TEST_END.test(line) || CSI_START_FAILED.test(line) : undefined,
+      });
+      if (selfTest && state.task === 'idle') return;
+      if (currentWifi && state.task === 'scanning') state.wifiStatus = { state: 'disconnected' };
+      if (operation.task === 'csi' && lines.some((line) => CSI_START_FAILED.test(line))) {
+        state.task = 'idle';
+        state.taskKind = '';
+        state.motionSelfTest = false;
+        if (currentWifi) await syncWifiStatus();
+        showNotice('motionStartFailed');
+        return;
+      }
       if (command === 'nmea') state.task = 'scanning';
       if (command === 'info') {
         applyDeviceInfo(lines);
@@ -1540,7 +1961,7 @@ async function runAction(command, operation = {}) {
           state.task = 'taskUnknown';
           showNotice('notConfirmed');
         }
-      } else if (operation.task && state.task === 'scanning' && duration > 0) {
+      } else if (operation.task && state.task === 'scanning' && duration > 0 && !selfTest) {
         scheduleScanAutoStop(session, Math.max(0, state.scanEndsAt ? state.scanEndsAt - Date.now() : duration * 1000));
       }
     } catch (error) {
@@ -1681,6 +2102,30 @@ elements.connect.addEventListener('click', connect);
 elements.disconnect.addEventListener('click', disconnect);
 elements.start.addEventListener('click', startScan);
 elements.stop.addEventListener('click', stopScan);
+motionNode('save-band-snapshot').addEventListener('click', () => {
+  const groups = bandGroups();
+  if (!groups.length) return;
+  state.bandSnapshot = {
+    at: Date.now(),
+    rows: new Map(groups.map((group) => [group.key, { rssi24: group.band24?.rssi ?? null, rssi5: group.band5?.rssi ?? null }])),
+  };
+  renderBandCompare();
+});
+motionNode('clear-band-snapshot').addEventListener('click', () => {
+  state.bandSnapshot = null;
+  renderBandCompare();
+});
+const motionCanvas = document.querySelector('.motion-canvas');
+motionCanvas.addEventListener('pointermove', (event) => {
+  const rect = motionCanvas.getBoundingClientRect();
+  motionHoverRatio = rect.width ? (event.clientX - rect.left) / rect.width : null;
+  renderMotionHover();
+});
+motionCanvas.addEventListener('pointerleave', () => {
+  motionHoverRatio = null;
+  renderMotionHover();
+});
+motionNode('motion-stop').addEventListener('click', stopScan);
 elements['wifi-status-refresh'].addEventListener('click', refreshWifiStatus);
 elements['wifi-disconnect'].addEventListener('click', disconnectWifi);
 elements.search.addEventListener('input', renderNetworks);

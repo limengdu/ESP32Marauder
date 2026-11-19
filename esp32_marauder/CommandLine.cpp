@@ -997,6 +997,47 @@ void CommandLine::runCommand(String input) {
           if (!csi_motion_obj.start(ap.bssid, ap.essid, ap.channel))
             Serial.println(F("CSI motion start failed"));
         }
+      #if defined(CONFIG_IDF_TARGET_ESP32C5)
+      } else if (cmd_args.size() == 4 && cmd_args.get(1) == "selftest") {
+        const String token = cmd_args.get(2);
+        char* end = nullptr;
+        const long idx = strtol(token.c_str(), &end, 10);
+        const String ssid = cmd_args.get(3);
+        if (end == token.c_str() || *end || idx < 0 || idx >= access_points->size() ||
+            !ssid.length() || ssid.length() > 32) {
+          Serial.println(F("CSI self-test failed: invalid target"));
+        } else {
+          const AccessPoint& ap = access_points->get(idx);
+          csi_motion_obj.startGatewayTest(ap.bssid, ssid, ap.channel);
+        }
+      #endif
+      } else if (cmd_args.size() == 2 && cmd_args.get(1) == "connected") {
+        // Read the associated BSSID and channel, then hand them to passive CSI.
+        // 读取当前关联的无线地址和信道，再交给被动 CSI 监听。
+        wifi_ap_record_t connection = {};
+        const bool associated = esp_wifi_sta_get_ap_info(&connection) == ESP_OK;
+        bool bssid_set = false;
+        for (int i = 0; i < 6; ++i) if (connection.bssid[i]) bssid_set = true;
+        if (!associated || !bssid_set || (connection.bssid[0] & 0x01) || connection.primary == 0) {
+          Serial.println(associated
+              ? F("CSI motion could not read the connected access point")
+              : F("CSI motion needs an active WiFi connection"));
+        } else {
+          char joined_name[33] = {};
+          memcpy(joined_name, connection.ssid, 32);
+          String name = joined_name;
+          if (name.length() == 0) name = wifi_scan_obj.connected_network;
+          // Release the station driver before opening the CSI listener.
+          // 关闭入网使用的无线驱动，再开启 CSI 监听。
+          if (!WiFi.mode(WIFI_OFF)) {
+            Serial.println(F("CSI motion could not release the WiFi connection"));
+          } else {
+            wifi_scan_obj.wifi_initialized = false;
+            wifi_scan_obj.wifi_connected = false;
+            if (!csi_motion_obj.start(connection.bssid, name, connection.primary))
+              Serial.println(F("CSI motion start failed"));
+          }
+        }
       } else if (cmd_args.size() == 2 && cmd_args.get(1) == "recalibrate") {
         if (!csi_motion_obj.active()) Serial.println(F("CSI motion is not running"));
         else {

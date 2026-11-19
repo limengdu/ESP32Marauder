@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>XIAO Control</title>
-  <link rel="stylesheet" href="style.css?v=8">
-  <script type="module" src="app.js?v=8"></script>
+  <link rel="stylesheet" href="style.css?v=10">
+  <script type="module" src="app.js?v=17"></script>
 </head>
 <body>
   <div class="app">
@@ -51,7 +51,7 @@
         <section id="advanced" class="command-page" data-view hidden aria-labelledby="advanced-heading">
           <header class="command-heading">
             <h1 id="advanced-heading" data-i18n="advancedPage">Advanced tools</h1>
-            <p data-i18n="advancedDescription">Inspect both Wi-Fi bands, diagnose your equipment, or save a capture to this computer.</p>
+            <p data-i18n="advancedDescription">Compare both Wi-Fi bands and watch motion through your own access point.</p>
           </header>
           <nav class="command-jumps" data-label="functionGroups" aria-label="Tool groups">
             <button type="button" data-jump="advanced-bands" data-i18n="dualBand">Dual-band survey</button>
@@ -62,16 +62,72 @@
             <button type="button" data-jump="capture-panel" data-i18n="captureTitle">USB packet capture</button>
             <button type="button" data-jump="advanced-gps" data-i18n="group_gps">GPS</button>
           </nav>
-          <section class="command-group" id="advanced-bands">
-            <h2 data-i18n="dualBand">Dual-band survey</h2>
-            <p data-i18n="dualDescription">Sweep with channel hopping on, then compare the two bands in Wi-Fi results.</p>
-            <div class="operation-grid" data-operation-group="dualBand"></div>
-            <div class="band-links">
-              <a class="command-link" href="#networks" data-result-band="2.4">2.4 GHz <span id="band-count-24">0</span></a>
-              <a class="command-link" href="#networks" data-result-band="5">5 GHz <span id="band-count-5">0</span></a>
+          <section class="command-group showcase" id="advanced-bands">
+            <div class="showcase-heading">
+              <div><h2 data-i18n="dualBand">Dual-band survey</h2><p data-i18n="dualDescription">Sweep both bands, then compare the same network names side by side.</p></div>
+              <div class="band-score" data-label="bandCountsLabel" aria-label="Networks per band"><span>2.4 GHz <strong id="band-count-24">0</strong></span><span>5 GHz <strong id="band-count-5">0</strong></span></div>
             </div>
+            <div id="band-compare" class="band-compare" hidden>
+              <div class="band-compare-tools"><strong data-i18n="bandCompareTitle">Same network, two bands</strong><button type="button" id="save-band-snapshot" class="text-button" data-i18n="saveBandSnapshot">Save this spot</button><button type="button" id="clear-band-snapshot" class="text-button" hidden data-i18n="clearBandSnapshot">Clear saved spot</button></div>
+              <div id="band-snapshot-note" class="band-snapshot-note" hidden></div>
+              <div class="band-compare-head"><div data-i18n="name">NETWORK</div><div>2.4 GHz</div><div>5 GHz</div><div data-i18n="bandWinner">STRONGER</div></div>
+              <div id="band-compare-rows" class="band-rows"></div>
+            </div>
+            <p id="band-compare-empty" class="showcase-empty" data-i18n="bandCompareEmpty">Run a dual-band survey to compare networks that appear on both bands.</p>
+            <div class="operation-grid" data-operation-group="dualBand"></div>
+            <div class="band-links"><a class="command-link" href="#networks" data-result-band="2.4" data-i18n="openBand24">Open 2.4 GHz results</a><a class="command-link" href="#networks" data-result-band="5" data-i18n="openBand5">Open 5 GHz results</a></div>
           </section>
-          <section class="command-group" id="advanced-motion"><h2 data-i18n="motion">Motion sensing (CSI)</h2><p data-i18n="motionDescription">Choose your own access point and keep the board still for the first 30 seconds.</p><div class="operation-grid" data-operation-group="motion"></div><output aria-live="off" class="device-reading" id="motion-reading"></output></section>
+          <section class="command-group showcase" id="advanced-motion">
+            <div class="showcase-heading">
+              <div><h2 data-i18n="motion">Motion sensing (CSI)</h2><p data-i18n="motionDescription">The board estimates movement from changes in Wi-Fi signals sent by the selected access point.</p></div>
+              <span id="motion-state" class="badge" role="status"></span>
+            </div>
+            <div class="motion-guide">
+              <p id="motion-summary" data-i18n="motionWaiting">Scan for access points, choose your own, then start sensing.</p>
+              <button type="button" id="motion-stop" class="button secondary" data-i18n="motionStop" hidden>Stop sensing</button>
+            </div>
+            <div class="motion-stage">
+              <div class="motion-plot">
+                <div class="motion-ylabels" aria-hidden="true"><span>100</span><span>50</span><span>0</span></div>
+                <div class="motion-canvas">
+                  <svg id="motion-chart" viewBox="0 0 640 180" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+                    <g class="motion-grid">
+                      <line x1="8" y1="16" x2="632" y2="16" vector-effect="non-scaling-stroke"></line>
+                      <line x1="8" y1="86" x2="632" y2="86" vector-effect="non-scaling-stroke"></line>
+                      <line x1="8" y1="156" x2="632" y2="156" vector-effect="non-scaling-stroke"></line>
+                    </g>
+                    <path id="motion-area" d=""></path>
+                    <path id="motion-line" d="" fill="none" vector-effect="non-scaling-stroke"></path>
+                  </svg>
+                  <span id="motion-cross" hidden></span>
+                  <span id="motion-dot" hidden></span>
+                  <div id="motion-tip" class="motion-tip" hidden></div>
+                </div>
+              </div>
+              <div id="motion-cal" class="motion-cal" hidden><span id="motion-cal-fill"></span></div>
+              <div class="motion-metrics"><span><small data-i18n="motionScore">MOTION</small><strong id="motion-score">—</strong></span><span><small data-i18n="motionReliability">RELIABILITY</small><strong id="motion-reliability">—</strong></span><span><small data-i18n="motionRate">SAMPLES/S</small><strong id="motion-rate">—</strong></span><span><small data-i18n="motionCalibration">CALIBRATION</small><strong id="motion-calibration">—</strong></span></div>
+            </div>
+            <template id="motion-target-inputs">
+              <label class="operation-field" hidden><span data-i18n="motionTargetName">Wi-Fi name or radio address (BSSID)</span>
+                <input name="motionTarget" autocomplete="off" spellcheck="false">
+              </label>
+              <label class="operation-field" hidden><span data-i18n="wifiSsid">Network name (SSID)</span>
+                <input name="motionSsid" autocomplete="off" spellcheck="false">
+              </label>
+              <label class="operation-field" hidden><span>BSSID</span>
+                <input name="motionBssid" autocomplete="off" spellcheck="false" placeholder="02:11:22:33:44:55">
+              </label>
+              <label class="operation-field" hidden><span data-i18n="channel">Channel</span>
+                <select name="motionChannel"><option value="" data-i18n="motionChooseChannel">Choose the router's channel</option></select>
+              </label>
+              <label class="operation-field" hidden><span data-i18n="motionJoinPassword">Password (leave blank for open Wi-Fi)</span>
+                <input name="motionPassword" type="password" autocomplete="off">
+              </label>
+              <p class="operation-desc" role="status" data-motion-hint hidden></p>
+            </template>
+            <div class="operation-grid" data-operation-group="motion"></div>
+            <output aria-live="off" class="device-reading" id="motion-reading"></output>
+          </section>
           <section class="command-group" id="advanced-lan">
             <h2 data-i18n="lan">Wi-Fi join & LAN</h2>
             <p data-i18n="lanDescription">Connect to your own Wi-Fi network and inspect hosts on its LAN. Check the authorization box below first: pick a scanned network or enter a Wi-Fi name and password in Connect & save Wi-Fi to store credentials on the board, then reuse Join saved Wi-Fi anytime.</p>

@@ -185,7 +185,11 @@ const char PROGMEM HELP_ARP_SCAN_CMD[] = "arpscan [-f]";
 const char PROGMEM HELP_MAC_TRACK_CMD[] = "mactrack";
 const char PROGMEM HELP_SNIFF_SAE_CMD[] = "sniffsae";
 const char PROGMEM HELP_REMOTE_ID_CMD[] = "remoteid <scan/list/track/clear> [index]";
-const char PROGMEM HELP_CSI_MOTION_CMD[] = "csimotion start <AP index>/recalibrate/status (stop with stopscan)";
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+const char PROGMEM HELP_CSI_MOTION_CMD[] = "csimotion start <AP index>/connected/selftest <AP index> \"<ssid>\"/recalibrate/status (stop with stopscan)";
+#else
+const char PROGMEM HELP_CSI_MOTION_CMD[] = "csimotion start <AP index>/connected/recalibrate/status (stop with stopscan)";
+#endif
 
 // WiFi attack
 const char PROGMEM HELP_ATTACK_CMD[] = "attack -t <quiet/csa/sae/beacon [-l/-r/-a]/deauth [-c]/[-s <src mac>] [-d <dst mac>]/probe/rickroll/badmsg [-c]/sleep [-c]>";

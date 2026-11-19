@@ -37,7 +37,7 @@ const operationGroups = {
     { id: 'dualStop', command: 'stopscan', action: 'dualStop', during: 'dual' },
   ],
   motion: [
-    { id: 'motionStart', command: 'csimotion start', field: target, task: 'csi' },
+    { id: 'motionStart', command: 'csimotion start', field: { ...target, observedOnly: true }, task: 'csi' },
     { id: 'motionStatus', command: 'csimotion status', during: 'csiOrIdle' },
     { id: 'motionRecalibrate', command: 'csimotion recalibrate', during: 'csi' },
   ],
@@ -69,6 +69,11 @@ const operationGroups = {
   ],
 };
 
+/** A measured RSSI or received frame identifies an observed AP in device results. */
+export function hasRadioObservation({ rssi, frames }) {
+  return (Number.isFinite(rssi) && rssi > -127 && rssi < 0) || frames > 0;
+}
+
 function activeFor(operation, task, taskKind) {
   switch (operation.during) {
     case 'any': return true;
@@ -88,7 +93,7 @@ function activeFor(operation, task, taskKind) {
 export function setupFunctions({ translate, execute }) {
   const controls = [];
   const lanConsent = document.getElementById('lan-authorized');
-  let device = { ready: false, busy: false, task: 'idle', taskKind: '', networks: new Map() };
+  let device = { ready: false, busy: false, task: 'idle', taskKind: '', networks: new Map(), wifiConnected: false, wifiSsid: '' };
 
   const utf8 = new TextEncoder();
 
@@ -112,20 +117,23 @@ export function setupFunctions({ translate, execute }) {
         ]);
     }
     return networks
-      .filter(({ index }) => Number.isInteger(index) && index >= 0)
+      .filter((network) => Number.isInteger(network.index) && network.index >= 0 && (!field.observedOnly || hasRadioObservation(network)))
       .sort((a, b) => a.index - b.index)
-      .map(({ index, bssid, name }) => [bssid, `[${index}] ${name || bssid}`]);
+      .map(({ index, bssid, name, channel }) => {
+        const label = `[${index}] ${name || bssid}`;
+        return [bssid, field.observedOnly ? `${label} · ${translate('bandChannel', { channel })} · ${bssid}` : label];
+      });
   }
 
   /**
    * Format a CLI argument for Marauder's quote-aware command parser.
    * 为 Marauder 支持引号的命令行解析器格式化参数。
    */
-  function quoteCliValue(value, maxBytes = 63) {
+  function quoteCliValue(value, maxBytes = 63, alwaysQuote = false) {
     if (!value || /[\r\n]/.test(value)) return null;
     if (value.includes('"') && value.includes("'")) return null;
     if (utf8.encode(value).length > maxBytes) return null;
-    if (!/[\s"']/.test(value)) return value;
+    if (!alwaysQuote && !/[\s"']/.test(value)) return value;
     return value.includes('"') ? `'${value}'` : `"${value}"`;
   }
 
@@ -171,10 +179,73 @@ export function setupFunctions({ translate, execute }) {
     if (operation.field.networks) {
       const network = device.networks.get(value);
       if (!network || !Number.isInteger(network.index) || network.index < 0) return null;
+      if (operation.field.observedOnly && !hasRadioObservation(network)) return null;
       return { command: `${operation.command} ${network.index}`, operation: { ...operation, network: value } };
     }
     if (!choices(operation.field).some(([id]) => value === id)) return null;
     return { command: `${operation.command} ${value}`, operation };
+  }
+
+  /** Resolve a CSI target to a measured AP, a supplied radio address, or an explicit join. */
+  function resolveMotion({ operation, select, motion }) {
+    const mode = select.value;
+    const input = motion.motionTarget.value;
+    const connected = { command: 'csimotion connected', operation };
+    if (mode === 'connected') return { request: device.wifiConnected ? connected : null };
+    if (mode === 'join') {
+      const quotedSsid = quoteCliValue(input, 32);
+      const secret = motion.motionPassword.value;
+      const quotedPassword = secret ? quoteCliValue(secret) : '""';
+      return {
+        hint: 'motionJoinHint',
+        request: quotedSsid && quotedPassword ? {
+          ...connected, operation: { ...operation, join: { ssid: input, quotedSsid, quotedPassword } },
+        } : null,
+      };
+    }
+    const selfTest = mode === 'selftest';
+    if (!selfTest && mode !== 'manual') return { request: resolve(operation, mode) };
+    const address = (selfTest ? motion.motionBssid.value : input).trim().toLowerCase();
+    const isAddress = /^(?:[\da-f]{2}:){5}[\da-f]{2}$/.test(address);
+    const unicast = isAddress && !(parseInt(address.slice(0, 2), 16) & 1) && address !== '00:00:00:00:00:00';
+    if (selfTest) {
+      const ssid = motion.motionSsid.value;
+      const quotedSsid = /[\x00-\x1f\x7f]/.test(ssid) ? null : quoteCliValue(ssid, 32, true);
+      const channel = motion.motionChannel.value;
+      const command = 'csimotion selftest';
+      return {
+        hint: 'motionSelfTestHint', showChannel: true,
+        request: quotedSsid && unicast && channelChoices.includes(channel) ? {
+          command, preview: `${command} <index> ${quotedSsid}`,
+          operation: { ...operation, radioTarget: { bssid: address, channel: Number(channel), quotedSsid }, duration: 60 },
+        } : null,
+      };
+    }
+    if (!input) return { hint: 'motionManualHint' };
+    if (isAddress && !unicast) {
+      return { hint: 'motionInvalidAddress' };
+    }
+    const matches = [...device.networks.values()].filter((ap) => hasRadioObservation(ap) &&
+      (isAddress ? ap.bssid === address : !ap.hidden && ap.name === input));
+    if (matches.length > 1) return { hint: 'motionSeveralTargets' };
+    const ap = matches[0];
+    if (ap && Number.isInteger(ap.index) && ap.index >= 0) return { request: resolve(operation, ap.bssid) };
+    if (!ap && !isAddress) {
+      if (device.wifiConnected && input === device.wifiSsid) return { request: connected };
+      return { hint: 'motionNameMissing' };
+    }
+    const bssid = ap?.bssid ?? address;
+    const measuredChannel = ap && channelChoices.includes(String(ap.channel));
+    const channel = measuredChannel ? ap.channel : Number(motion.motionChannel.value);
+    const target = { bssid, channel };
+    return {
+      showChannel: !measuredChannel,
+      hint: 'motionAddressHint',
+      request: channelChoices.includes(String(channel)) ? {
+        command: operation.command, operation: { ...operation, radioTarget: target },
+        preview: `${bssid} · ${translate('bandChannel', { channel })}`,
+      } : null,
+    };
   }
 
   function permitted(operation) {
@@ -188,6 +259,10 @@ export function setupFunctions({ translate, execute }) {
       if (select && operation.field.networks) {
         const defaultOptionKey = operation.field.emptyLabel ?? 'chooseNetwork';
         const options = choices(operation.field);
+        if (control.motion) {
+          options.unshift(['manual', translate('motionManualOption')], ['join', translate('motionJoinOption')], ['selftest', translate('motionSelfTestOption')]);
+          if (device.wifiConnected) options.unshift(['connected', [translate('motionCurrentOption'), device.wifiSsid].filter(Boolean).join(' · ')]);
+        }
         const signature = JSON.stringify([translate(defaultOptionKey), options]);
         if (control.signature !== signature) {
           const previous = select.value;
@@ -195,6 +270,25 @@ export function setupFunctions({ translate, execute }) {
           select.replaceChildren(new Option(translate(defaultOptionKey), ''), ...options.map(([id, label]) => new Option(label, id)));
           if (options.some(([id]) => id === previous)) select.value = previous;
         }
+      }
+      if (control.motion) {
+        const { motionTarget, motionChannel, motionPassword, motionSsid, motionBssid } = control.motion;
+        const joining = select.value === 'join';
+        const selfTest = select.value === 'selftest';
+        control.description.hidden = selfTest;
+        motionSsid.parentElement.hidden = !selfTest;
+        motionBssid.parentElement.hidden = !selfTest;
+        motionTarget.parentElement.hidden = select.value !== 'manual' && !joining;
+        motionTarget.previousElementSibling.textContent = translate(joining ? 'wifiSsid' : 'motionTargetName');
+        motionPassword.parentElement.hidden = !joining;
+        if (!joining) motionPassword.value = '';
+        const { request, hint, showChannel } = resolveMotion(control);
+        motionChannel.parentElement.hidden = !showChannel;
+        control.hint.textContent = hint ? translate(hint) : '';
+        control.hint.hidden = !hint;
+        preview.textContent = request?.preview ?? request?.command ?? '';
+        run.disabled = !request || !permitted(operation);
+        continue;
       }
       if (operation.action === 'joinWifi') {
         const resolved = resolveJoinWifi(operation, select?.value, passwordInput?.value ?? '', ssidInput?.value ?? '');
@@ -243,6 +337,14 @@ export function setupFunctions({ translate, execute }) {
       }
       label.append(text('span', operation.field.label), select);
       form.append(label);
+    }
+    let motion;
+    if (operation.id === 'motionStart') {
+      form.append(document.getElementById('motion-target-inputs').content.cloneNode(true));
+      motion = form.elements;
+      motion.motionChannel.append(...channelChoices.map((value) => new Option(value, value)));
+      motion.motionTarget.addEventListener('input', () => { motion.motionChannel.value = ''; });
+      select.addEventListener('change', () => { motion.motionChannel.value = ''; });
     }
     if (operation.ssid) {
       const label = document.createElement('label');
@@ -308,22 +410,24 @@ export function setupFunctions({ translate, execute }) {
     const actions = document.createElement('div');
     actions.className = 'operation-actions';
     const preview = document.createElement('code');
-    const run = text('button', 'runAction');
+    const run = text('button', motion ? 'motionStart' : 'runAction');
     run.className = 'button secondary';
-    run.setAttribute('aria-labelledby', `${operation.id}-run ${operation.id}-title`);
+    if (!motion) run.setAttribute('aria-labelledby', `${operation.id}-run ${operation.id}-title`);
     run.id = `${operation.id}-run`;
     form.querySelector('h3').id = `${operation.id}-title`;
     run.type = 'submit';
     actions.append(preview, run);
     form.append(actions);
-    controls.push({ operation, select, ssidInput, passwordInput, preview, run, confirm });
+    const control = { operation, select, ssidInput, passwordInput, preview, run, confirm, motion, description, hint: form.querySelector('[data-motion-hint]') };
+    controls.push(control);
     form.addEventListener('input', updateControls);
     form.addEventListener('change', updateControls);
     form.addEventListener('submit', (event) => {
       event.preventDefault();
-      const request = resolve(operation, select?.value, passwordInput?.value ?? '', ssidInput?.value ?? '');
+      const request = motion ? resolveMotion(control).request : resolve(operation, select?.value, passwordInput?.value ?? '', ssidInput?.value ?? '');
       if (!request || !permitted(operation) || (confirm && !confirm.checked)) return;
       if (passwordInput) passwordInput.value = '';
+      if (motion) motion.motionPassword.value = '';
       if (confirm) confirm.checked = false;
       const payload = durationSelect ? { ...request.operation, duration: Number(durationSelect.value) } : request.operation;
       execute(request.command, payload);
@@ -342,8 +446,9 @@ export function setupFunctions({ translate, execute }) {
     update(next) {
       if (!next.ready) {
         lanConsent.checked = false;
-        for (const { passwordInput } of controls) {
+        for (const { passwordInput, motion } of controls) {
           if (passwordInput) passwordInput.value = '';
+          if (motion) motion.motionPassword.value = '';
         }
       }
       device = next;

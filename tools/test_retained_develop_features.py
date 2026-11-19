@@ -138,6 +138,8 @@ class RetainedDevelopFeatureTests(unittest.TestCase):
         self.assertIn("#if defined(CONFIG_IDF_TARGET_ESP32C5)", monitor)
         self.assertIn('CSI_MOTION_CMD[] = "csimotion"', cli_h)
         self.assertIn("csi_motion_obj.start(ap.bssid, ap.essid, ap.channel)", cli_cpp)
+        self.assertIn('cmd_args.get(1) == "connected"', cli_cpp)
+        self.assertIn("esp_wifi_sta_get_ap_info", cli_cpp)
         self.assertIn("csi_motion_obj.printStatus();", cli_cpp)
 
 if __name__ == "__main__":

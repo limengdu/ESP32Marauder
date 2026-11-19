@@ -169,8 +169,21 @@ void test_signed_8_bit_imag_real_samples_and_invalid_first_word() {
   TEST_ASSERT_LESS_THAN(20, model.motionScore());
 }
 
+void test_late_sample_is_ignored_across_clock_wrap() {
+  CsiMotionModel model;
+  int8_t sample[128];
+  fillSample(sample, 20, 10);
+  model.reset(UINT32_MAX - 499, 30000);
+  model.tick(500, 0, 0);
+  model.addSample(sample, sizeof(sample), -40, 499);
+  TEST_ASSERT_EQUAL_INT(-127, model.rssi());
+  model.addSample(sample, sizeof(sample), -50, 500);
+  TEST_ASSERT_EQUAL_INT(-50, model.rssi());
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
+  RUN_TEST(test_late_sample_is_ignored_across_clock_wrap);
   RUN_TEST(test_calibration_and_still_signal);
   RUN_TEST(test_changed_subcarriers_raise_motion_score);
   RUN_TEST(test_sparse_samples_reduce_reliability);
