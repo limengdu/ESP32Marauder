@@ -4,8 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>XIAO Control</title>
-  <link rel="stylesheet" href="style.css?v=10">
-  <script type="module" src="app.js?v=18"></script>
+  <link rel="stylesheet" href="style.css?v=11">
+  <link rel="stylesheet" href="signal-plot.css?v=1">
+  <script type="module" src="app.js?v=19"></script>
 </head>
 <body>
   <div class="app">
@@ -55,6 +56,7 @@
           </header>
           <nav class="command-jumps" data-label="functionGroups" aria-label="Tool groups">
             <button type="button" data-jump="advanced-bands" data-i18n="dualBand">Dual-band survey</button>
+            <button type="button" data-jump="advanced-map" data-i18n="mapTitle">Signal strength map</button>
             <button type="button" data-jump="advanced-motion" data-i18n="motion">Motion sensing</button>
             <button type="button" data-jump="advanced-lan" data-i18n="lan">Wi-Fi join & LAN</button>
             <button type="button" data-jump="advanced-detectors" data-i18n="detectors">Wireless detectors</button>
@@ -76,6 +78,26 @@
             <p id="band-compare-empty" class="showcase-empty" data-i18n="bandCompareEmpty">Run a dual-band survey to compare networks that appear on both bands.</p>
             <div class="operation-grid" data-operation-group="dualBand"></div>
             <div class="band-links"><a class="command-link" href="#networks" data-result-band="2.4" data-i18n="openBand24">Open 2.4 GHz results</a><a class="command-link" href="#networks" data-result-band="5" data-i18n="openBand5">Open 5 GHz results</a></div>
+          </section>
+          <section class="command-group showcase" id="advanced-map" aria-labelledby="map-title">
+            <div class="showcase-heading"><div><h2 id="map-title" data-i18n="mapTitle">Signal strength map</h2><p data-i18n="mapIntro">Listen for your router or BLE device, select its address, and record a reading at each stop.</p></div></div>
+            <div class="survey-controls">
+              <label class="operation-field"><span data-i18n="mapRadio">Radio</span><select id="map-radio"><option value="wifi">Wi-Fi</option><option value="ble" data-i18n="mapBle">Bluetooth LE</option></select></label>
+              <label class="operation-field"><span data-i18n="mapTarget">Signal to map</span><select id="map-target"></select></label>
+              <button id="map-scan" type="button" class="button secondary" data-i18n="mapListen">Start listening</button>
+            </div>
+            <div class="survey-controls">
+              <label class="operation-field"><span data-i18n="mapPosition">Position source</span><select id="map-position"><option value="indoor" data-i18n="mapIndoor">Indoor coordinates (metres)</option><option value="manual" data-i18n="mapManual">Enter longitude and latitude</option><option value="browser" data-i18n="mapBrowser">Use this computer's location</option></select></label>
+              <div id="map-coordinates" class="survey-coordinates">
+                <label class="operation-field"><span id="map-x-label"></span><input id="map-x" type="number" step="any" placeholder="0"></label>
+                <label class="operation-field"><span id="map-y-label"></span><input id="map-y" type="number" step="any" placeholder="0"></label>
+              </div>
+              <button id="map-record" type="button" class="button primary" data-i18n="mapRecord">Record this spot</button>
+            </div>
+            <p role="status" id="map-status"></p>
+            <div id="map-plot"></div>
+            <div class="survey-history"><strong id="map-count"></strong><button type="button" id="map-export" class="text-button" data-i18n="exportResults">Export CSV</button><button type="button" id="map-clear" class="text-button" data-i18n="mapClear">Clear these points</button></div>
+            <details id="map-details"><summary data-i18n="mapTable">Measured points</summary><div class="survey-table"><table><thead><tr><th data-i18n="mapTime">Time</th><th id="map-col-x"></th><th id="map-col-y"></th><th>RSSI (dBm)</th></tr></thead><tbody id="map-rows"></tbody></table></div></details>
           </section>
           <section class="command-group showcase" id="advanced-motion">
             <div class="showcase-heading">

@@ -133,6 +133,9 @@ const char PROGMEM UPLOAD_CMD[] = "upload";
 const char PROGMEM BT_SPAM_CMD[] = "blespam";
 const char PROGMEM BT_FINDMY_CMD[] = "findmy";
 const char PROGMEM BT_SNIFF_CMD[] = "sniffbt";
+#ifdef XIAO_ESP32_C5
+const char PROGMEM BT_SURVEY_CMD[] = "blesurvey";
+#endif
 const char PROGMEM BT_SPOOFAT_CMD[] = "spoofat";
 //const char PROGMEM BT_WARDRIVE_CMD[] = "btwardrive";
 const char PROGMEM BT_SKIM_CMD[] = "sniffskim";

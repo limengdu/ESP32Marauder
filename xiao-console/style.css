@@ -70,6 +70,7 @@ a.button{display:inline-flex;align-items:center;text-decoration:none}.hero-start
 .scan-duration select{min-width:0;width:auto;min-height:42px;border:1px solid #d4e0d4;border-radius:8px;background:#fff;color:var(--ink);padding:8px 10px;font:inherit}
 .capture-module .action-submit{margin-bottom:10px}
 .command-group .bluetooth-results{margin-top:12px}
+.survey-controls{display:flex;align-items:end;flex-wrap:wrap;gap:8px;margin-bottom:10px}.survey-controls>.operation-field{flex:1 1 145px;min-width:0}.survey-controls .button{min-height:36px}.survey-coordinates{display:flex;flex:1 1 180px;min-width:0;gap:8px}.survey-coordinates[hidden]{display:none}.survey-coordinates label{flex:1;min-width:0}.survey-history{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:10px 0}.survey-history strong,#map-details summary{font-size:12px}.survey-table{max-height:260px;overflow:auto}.survey-table td,.survey-table th{padding:7px 9px;font-variant-numeric:tabular-nums}#map-details summary{cursor:pointer;color:var(--green)}#map-status{min-height:1.5em;margin:8px 0}
 .showcase-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:12px}
 .showcase-heading h2{margin:0 0 6px}
 .showcase-heading p{max-width:68ch;margin:0;font-size:13px;color:#546e61;line-height:1.55}

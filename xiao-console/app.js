@@ -1,4 +1,5 @@
 import { setupMonitor } from './monitor.js?v=10';
+import { setupSignalMap } from './signal-map.js?v=1';
 import { hasRadioObservation, setupFunctions } from './functions.js?v=15';
 import { setupCapture } from './capture.js?v=10';
 import { SerialPcapDecoder } from './pcap.js?v=10';
@@ -16,6 +17,7 @@ const NETWORK_LINE = new RegExp(`^(-?\\d+) Ch: (\\d+) (${MAC}) ESSID: ?(.*?)(?:\
 const STATION_LINE = new RegExp(`^\\d+: (?:ap: (${MAC}) -> sta: (${MAC})|sta: (${MAC}) -> ap: (${MAC}))`);
 const LIST_LINE = /^\[(\d+)\]\[CH:(\d+)\] (.*) (-?\d+)( \(selected\))?$/;
 const BLE_LIST_LINE = /^\[(\d+)\]\[RSSI:(-?\d+)\] (.*)$/;
+const BLE_SURVEY_LINE = new RegExp(`^BLE,\\d+,(${MAC}),(-?\\d+)(?:,(.*))?$`);
 const INFO_LINE = /^\s*(ESSID|BSSID|Channel|RSSI|Frames|Stations|Brand|Security): ?(.*)$/;
 const IPV4_LINE = /^\d{1,3}(?:\.\d{1,3}){3}$/;
 const LAN_LIST_LINE = /^\[(\d+)\]\s+(\d{1,3}(?:\.\d{1,3}){3})$/;
@@ -140,6 +142,11 @@ function t(key, params = {}) {
 
 const monitor = setupMonitor();
 const functions = setupFunctions({ translate: t, execute: runAction });
+const signalMap = setupSignalMap({ translate: t, exportCsv, scan: (radio) => {
+  if (state.wifiStatus?.state === 'connected' && !window.confirm(t('motionScanSwitch'))) return;
+  return radio === 'ble' ? runAction('blesurvey', { task: 'bleSurvey' })
+    : runAction('sniffbeacon', { task: 'beacon', action: 'dual' });
+}, stop: stopScan });
 const capture = setupCapture({ translate: t, start: startCapture, download: downloadFile });
 let captureTimer = 0;
 let scanStopTimer = 0;
@@ -386,6 +393,7 @@ function renderStatus() {
   renderWifiStatus(ready);
   renderLanHosts();
   capture.update({ ready, busy: state.busy, task, networks: state.networks });
+  signalMap.update({ ready, busy: state.busy, task, taskKind: state.taskKind, locale: state.locale, translations: state.text });
 }
 
 function signalTone(rssi) {
@@ -1092,7 +1100,8 @@ function handleLine(rawLine, logOffset = 0) {
     state.expectVersion = false;
   }
   const scanStarted = /^(?:Scanning for APs and Stations\.|Starting.*\. Stop with |Getting GPS Data\.|CSI motion started:)/;
-  const started = state.motionSelfTest ? line.startsWith('CSI motion started:') : scanStarted.test(line);
+  const started = state.taskKind === 'bleSurvey' ? line === 'BLE survey started'
+    : state.motionSelfTest ? line.startsWith('CSI motion started:') : scanStarted.test(line);
   if (state.task === 'startingScan' && started) {
     const now = Date.now();
     if (state.taskKind === 'csi') {
@@ -1146,6 +1155,9 @@ function handleLine(rawLine, logOffset = 0) {
     const name = match[4].replace(/\0/g, '').trim();
     const existing = state.networks.get(bssid);
     const resolvedName = name || existing?.name || '';
+    if (state.task === 'scanning' && state.taskKind === 'beacon') {
+      signalMap.observe('wifi', bssid, name || state.radioNames.get(bssid), Number(match[1]), Number(match[2]));
+    }
     upsertNetwork(bssid, {
       rssi: Number(match[1]),
       channel: Number(match[2]),
@@ -1153,6 +1165,8 @@ function handleLine(rawLine, logOffset = 0) {
       hidden: !resolvedName || resolvedName.toLowerCase() === bssid,
       ...(state.taskKind === 'beacon' ? { frames: (existing?.frames ?? 0) + 1 } : {}),
     });
+  } else if (state.task === 'scanning' && state.taskKind === 'bleSurvey' && (match = line.match(BLE_SURVEY_LINE))) {
+    signalMap.observe('ble', match[1], match[3], Number(match[2]));
   } else if ((match = line.match(STATION_LINE))) {
     handleStation(match);
   } else if ((match = line.match(LIST_LINE))) {
@@ -1330,6 +1344,7 @@ async function handleLost(error) {
 }
 
 function resetDeviceResults() {
+  signalMap.resetLive();
   state.networks.clear();
   state.radioNames.clear();
   state.listEntries.clear();
@@ -1913,7 +1928,7 @@ async function runAction(command, operation = {}) {
     }
     const duration = operation.task && Number(operation.duration) > 0 ? Number(operation.duration) : 0;
     try {
-      if (operation.task && WIFI_RAW_SCAN_TASKS.has(operation.task) && state.wifiStatus?.state === 'connected' && !currentWifi && !selfTest) {
+      if ((WIFI_RAW_SCAN_TASKS.has(operation.task) || operation.task === 'bleSurvey') && state.wifiStatus?.state === 'connected' && !currentWifi && !selfTest) {
         await releaseWifiConnection();
       }
       if (operation.action === 'dual') await setUpDualBand();
@@ -1959,7 +1974,11 @@ async function runAction(command, operation = {}) {
         stopScanTimer();
         state.scanDuration = 0;
         state.scanEndsAt = 0;
-        if (operation.task === 'lan') {
+        if (operation.task === 'bleSurvey') {
+          state.task = 'idle';
+          state.taskKind = '';
+          signalMap.scanFailed(lines.some((line) => /^BLE survey (?:busy|start failed)$/.test(line)) ? 'mapBleFailed' : 'mapBleFirmware');
+        } else if (operation.task === 'lan') {
           state.task = 'idle';
           state.taskKind = '';
           state.wifiStatus = { state: 'disconnected', ssid: '', ip: '', gateway: '', netmask: '', mac: '', reason: '' };

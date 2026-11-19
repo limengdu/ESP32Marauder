@@ -83,8 +83,12 @@ void CommandLine::main(uint32_t currentTime) {
 
   this->runCommand(input);
 
-  if (input != "")
+  if (input != "") {
     Serial.print("> ");
+    #ifdef XIAO_ESP32_C5
+      if (wifi_scan_obj.currentScanMode == BT_SCAN_SURVEY) Serial.println();
+    #endif
+  }
 }
 
 LinkedList<String> CommandLine::parseCommand(String input, char* delim) {
@@ -270,7 +274,15 @@ void CommandLine::runCommand(String input) {
     Serial.println("#" + input);
 
   LinkedList<String> cmd_args = this->parseCommand(input, " ");
-  
+  #ifdef XIAO_ESP32_C5
+    if (input == BT_SURVEY_CMD) {
+      wifi_scan_obj.StartScan(BT_SCAN_SURVEY);
+      return;
+    }
+    if (wifi_scan_obj.currentScanMode == BT_SCAN_SURVEY && cmd_args.get(0) != STOPSCAN_CMD)
+      return;
+  #endif
+
   //// Admin commands
   // Help
   if (cmd_args.get(0) == HELP_CMD) {
@@ -360,6 +372,9 @@ void CommandLine::runCommand(String input) {
     // Bluetooth sniff/scan
     #ifdef HAS_BT
       Serial.println(HELP_BT_SNIFF_CMD);
+      #ifdef XIAO_ESP32_C5
+        Serial.println(BT_SURVEY_CMD);
+      #endif
       Serial.println(HELP_BT_SPAM_CMD);
       Serial.println(HELP_BT_FINDMY_CMD);
       Serial.println(HELP_BT_SPOOFAT_CMD);

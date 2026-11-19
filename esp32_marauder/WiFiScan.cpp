@@ -1,6 +1,9 @@
 #include "esp_random.h"
 #include "WiFiScan.h"
 #include "StationSelection.h"
+#ifdef XIAO_ESP32_C5
+  #include "BleSurvey.h"
+#endif
 #ifdef HAS_FACES_KEYBOARD
   #include "Keyboard.h"
 #endif
@@ -60,6 +63,43 @@ constexpr size_t MAX_RETAINED_BLE_DEVICES = 128;
 constexpr uint16_t NIMBLE_DUPLICATE_CACHE_SIZE = 200;
 #endif
 constexpr uint32_t IBEACON_UI_INTERVAL_MS = 100;
+
+#ifdef XIAO_ESP32_C5
+class BleSurveyCallbacks : public NimBLEScanCallbacks {
+ public:
+  void reset() {
+    portENTER_CRITICAL(&mux_);
+    samples_.clear();
+    portEXIT_CRITICAL(&mux_);
+  }
+
+  // Passive onResult supplies the completed advertising report and its RSSI.
+  // 被动扫描的 onResult 提供完整广播及本次接收的 RSSI。
+  void onResult(const NimBLEAdvertisedDevice* device) override {
+    if (device->getAddressType() == 0xff) return;  // Anonymous advertisement / 匿名广播
+    portENTER_CRITICAL(&mux_);
+    samples_.receive(millis(), device->getAddress().getVal(), device->getRSSI());
+    portEXIT_CRITICAL(&mux_);
+  }
+
+  void printNext() {
+    marauder::BleSurveySample sample;
+    portENTER_CRITICAL(&mux_);
+    const bool received = samples_.take(millis(), sample);
+    portEXIT_CRITICAL(&mux_);
+    if (received) {
+      char line[48];
+      sample.format(line);
+      Serial.println(line);
+    }
+  }
+
+ private:
+  portMUX_TYPE mux_ = portMUX_INITIALIZER_UNLOCKED;
+  marauder::BleSurveySamples samples_;
+};
+BleSurveyCallbacks bleSurveyCallbacks;
+#endif
 
 #ifdef HAS_BT
 struct WatchModelEntry {
@@ -2785,7 +2825,39 @@ bool WiFiScan::scanning() {
 }
 
 // Function to prepare to run a specific scan
-void WiFiScan::StartScan(uint8_t scan_mode, uint16_t color) {  
+void WiFiScan::StartScan(uint8_t scan_mode, uint16_t color) {
+  #ifdef XIAO_ESP32_C5
+    if (scan_mode == BT_SCAN_SURVEY) {
+      wifi_mode_t mode;
+      if (scanning() || NimBLEDevice::isInitialized() ||
+          (esp_wifi_get_mode(&mode) == ESP_OK && mode != WIFI_MODE_NULL)) {
+        Serial.println(F("BLE survey busy"));
+        return;
+      }
+      if (!NimBLEDevice::init("")) {
+        Serial.println(F("BLE survey start failed"));
+        return;
+      }
+      ble_initialized = true;
+      pBLEScan = NimBLEDevice::getScan();
+      bleSurveyCallbacks.reset();
+      pBLEScan->setScanCallbacks(&bleSurveyCallbacks, true);
+      pBLEScan->setActiveScan(false);
+      pBLEScan->setMaxResults(0);
+      pBLEScan->setInterval(50);
+      pBLEScan->setWindow(30);
+      if (!pBLEScan->start(0, false, false) || !pBLEScan->isScanning()) {
+        shutdownBLE();
+        Serial.println(F("BLE survey start failed"));
+        return;
+      }
+      ble_scanning = true;
+      currentScanMode = BT_SCAN_SURVEY;
+      setLEDMode(MODE_SNIFF);
+      Serial.println(F("BLE survey started"));
+      return;
+    }
+  #endif
   #if defined(HAS_CSI_MOTION)
     if (scan_mode == WIFI_SCAN_OFF &&
         currentScanMode == WIFI_SCAN_CSI_MOTION) {
@@ -3297,6 +3369,9 @@ void WiFiScan::StopScan(uint8_t scan_mode) {
 
 
   if ((currentScanMode == BT_SCAN_ALL) ||
+  #ifdef XIAO_ESP32_C5
+  (currentScanMode == BT_SCAN_SURVEY) ||
+  #endif
   (currentScanMode == BT_SCAN_IBEACON) ||
   (currentScanMode == BT_SCAN_FOX_HUNT) ||
   (currentScanMode == BT_SCAN_RAYBAN) ||
@@ -12633,6 +12708,12 @@ void WiFiScan::runFoxHunt(uint32_t currentTime) {
 // Function for updating scan status
 void WiFiScan::main(uint32_t currentTime)
 {
+  #ifdef XIAO_ESP32_C5
+    if (currentScanMode == BT_SCAN_SURVEY) {
+      bleSurveyCallbacks.printNext();
+      return;
+    }
+  #endif
   // WiFi operations
   if ((currentScanMode == WIFI_SCAN_PROBE) ||
   (currentScanMode == WIFI_SCAN_AP) ||
