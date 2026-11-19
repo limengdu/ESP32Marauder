@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>XIAO Control</title>
   <link rel="stylesheet" href="style.css?v=11">
-  <link rel="stylesheet" href="signal-plot.css?v=1">
-  <script type="module" src="app.js?v=19"></script>
+  <link rel="stylesheet" href="signal-plot.css?v=2">
+  <script type="module" src="app.js?v=20"></script>
 </head>
 <body>
   <div class="app">
@@ -80,7 +80,12 @@
             <div class="band-links"><a class="command-link" href="#networks" data-result-band="2.4" data-i18n="openBand24">Open 2.4 GHz results</a><a class="command-link" href="#networks" data-result-band="5" data-i18n="openBand5">Open 5 GHz results</a></div>
           </section>
           <section class="command-group showcase" id="advanced-map" aria-labelledby="map-title">
-            <div class="showcase-heading"><div><h2 id="map-title" data-i18n="mapTitle">Signal strength map</h2><p data-i18n="mapIntro">Listen for your router or BLE device, select its address, and record a reading at each stop.</p></div></div>
+            <div class="showcase-heading"><div><h2 id="map-title" data-i18n="mapTitle">Signal strength map</h2><p data-i18n="mapIntro">Measure at several locations to see where the signal gets stronger or weaker.</p></div>
+              <div class="survey-views" role="group" data-label="mapTitle"><button id="map-view-live" type="button" aria-pressed="true" data-i18n="mapViewLive">My survey</button><button id="map-view-example" type="button" aria-pressed="false" data-i18n="mapViewExample">Heatmap example</button></div>
+            </div>
+            <div class="survey-workspace">
+            <div id="map-plot"></div>
+            <div id="map-tools" class="survey-tools">
             <div class="survey-controls">
               <label class="operation-field"><span data-i18n="mapRadio">Radio</span><select id="map-radio"><option value="wifi">Wi-Fi</option><option value="ble" data-i18n="mapBle">Bluetooth LE</option></select></label>
               <label class="operation-field"><span data-i18n="mapTarget">Signal to map</span><select id="map-target"></select></label>
@@ -95,8 +100,8 @@
               <button id="map-record" type="button" class="button primary" data-i18n="mapRecord">Record this spot</button>
             </div>
             <p role="status" id="map-status"></p>
-            <div id="map-plot"></div>
-            <div class="survey-history"><strong id="map-count"></strong><button type="button" id="map-export" class="text-button" data-i18n="exportResults">Export CSV</button><button type="button" id="map-clear" class="text-button" data-i18n="mapClear">Clear these points</button></div>
+            </div></div>
+            <div id="map-history" class="survey-history"><strong id="map-count"></strong><button type="button" id="map-export" class="text-button" data-i18n="exportResults">Export CSV</button><button type="button" id="map-clear" class="text-button" data-i18n="mapClear">Clear these points</button></div>
             <details id="map-details"><summary data-i18n="mapTable">Measured points</summary><div class="survey-table"><table><thead><tr><th data-i18n="mapTime">Time</th><th id="map-col-x"></th><th id="map-col-y"></th><th>RSSI (dBm)</th></tr></thead><tbody id="map-rows"></tbody></table></div></details>
           </section>
           <section class="command-group showcase" id="advanced-motion">

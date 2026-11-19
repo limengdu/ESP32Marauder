@@ -1,5 +1,5 @@
 import { setupMonitor } from './monitor.js?v=10';
-import { setupSignalMap } from './signal-map.js?v=1';
+import { setupSignalMap } from './signal-map.js?v=2';
 import { hasRadioObservation, setupFunctions } from './functions.js?v=15';
 import { setupCapture } from './capture.js?v=10';
 import { SerialPcapDecoder } from './pcap.js?v=10';
@@ -2122,7 +2122,9 @@ window.addEventListener('hashchange', showView);
 window.addEventListener('popstate', showView);
 showView();
 requestAnimationFrame(() => {
-  if (!viewScroll.size) document.getElementById('workspace-content').scrollTop = 0;
+  if (currentView === 'advanced' && ['survey', 'example'].includes(new URLSearchParams(location.search).get('map'))) {
+    document.getElementById('advanced-map').scrollIntoView({ block: 'start', behavior: 'instant' });
+  } else if (!viewScroll.size) document.getElementById('workspace-content').scrollTop = 0;
 });
 elements.connect.addEventListener('click', connect);
 elements.disconnect.addEventListener('click', disconnect);

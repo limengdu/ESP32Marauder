@@ -1,59 +1,79 @@
+#advanced-map { container-type: inline-size; }
+#advanced-map .showcase-heading { align-items: center; flex-wrap: wrap; }
+.survey-views { display: inline-flex; flex: none; gap: 2px; padding: 3px; border: 1px solid #d7e3db; border-radius: 9px; background: #eef4ee; }
+.survey-views button { padding: 6px 11px; border: 0; border-radius: 6px; background: transparent; color: #496457; font: inherit; font-size: 12px; font-weight: 650; }
+.survey-views button[aria-pressed="true"] { color: #173d32; background: #fff; box-shadow: 0 1px 4px #1c3e3224; }
+.survey-workspace { display: grid; gap: 14px; align-items: start; }
+#map-plot { min-width: 0; }
+.survey-tools { padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: #f6f9f5; }
+.survey-tools .survey-controls { align-items: stretch; }
+.survey-tools .survey-controls > button { align-self: end; }
+.survey-tools #map-status { margin-bottom: 0; color: #3e5b50; font-size: 12px; line-height: 1.6; }
+#map-tools[hidden], #map-history[hidden], #map-details[hidden] { display: none; }
+@container (min-width: 880px) {
+  .survey-workspace:has(#map-tools:not([hidden])) { grid-template-columns: minmax(0, 1fr) minmax(238px, 27%); }
+  .survey-tools .survey-controls { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .survey-tools .survey-controls + .survey-controls { border-top: 1px solid #dde7df; padding-top: 10px; }
+}
+
 .signal-plot {
-  --plot-surface: #fff;
-  --plot-ink: var(--ink, #1d312d);
-  --plot-label: #4a6355;
-  --plot-line: var(--line, #e7eee8);
+  --field-base: #0c2124;
+  --field-panel: #10282b;
+  --field-ink: #eefaf4;
+  --field-muted: #acccc4;
+  --field-line: #36514f;
+  --field-bright: #a8f3dc;
   min-width: 0;
+  overflow: hidden;
   margin: 0;
-  padding: 12px;
-  border: 1px solid var(--plot-line);
-  border-radius: 10px;
-  background: var(--plot-surface);
-  color: var(--plot-ink);
-  font: inherit;
-}
-
-.signal-plot-orientation,
-.signal-plot-distance,
-.signal-plot-legend,
-.signal-plot-detail,
-.signal-plot-empty {
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--plot-label);
-}
-
-.signal-plot-orientation { text-align: right; }
-.signal-plot-map { display: block; width: 100%; height: clamp(192px, 30vw, 280px); }
-.signal-plot-scale { fill: none; stroke: var(--plot-label); stroke-width: 1.5; }
-.signal-plot-distance { fill: var(--plot-label); }
-.signal-plot-point { cursor: pointer; }
-.signal-plot-hit { fill: none; stroke: none; pointer-events: all; }
-.signal-plot-dot { stroke: var(--plot-surface); stroke-width: 2; }
-.signal-plot-center { fill: var(--plot-surface); }
-.signal-plot-count { fill: var(--plot-ink); text-anchor: middle; font-size: 10px; font-weight: 700; }
-.signal-plot-point.is-current .signal-plot-hit { stroke: var(--plot-label); stroke-width: 1; }
-.signal-plot-point:hover .signal-plot-hit,
-.signal-plot-point:focus .signal-plot-hit { stroke: var(--plot-ink); stroke-width: 2; }
-
-.signal-plot-legend { padding-top: 8px; border-top: 1px solid var(--plot-line); }
-.signal-plot-legend-title { display: block; margin-bottom: 5px; color: var(--plot-ink); }
-.signal-plot-ramp,
-.signal-plot-ticks { width: 100%; max-width: 320px; }
-.signal-plot-ramp { height: 8px; border-radius: 4px; }
-.signal-plot-ticks {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  margin-top: 3px;
-  text-align: center;
+  background: var(--field-panel);
+  color: var(--field-ink);
+  border: 1px solid #203c3c;
+  border-radius: 12px;
   font-variant-numeric: tabular-nums;
 }
-.signal-plot-detail { margin: 8px 0 0; overflow-wrap: anywhere; }
-.signal-plot-empty { padding: 24px 0; margin: 0; text-align: center; }
-
+.field-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 13px 18px; border-bottom: 1px solid var(--field-line); }
+.field-identity { min-width: 0; display: grid; gap: 3px; }
+.field-title { font-size: clamp(15px, 2vw, 21px); line-height: 1.2; overflow-wrap: anywhere; color: var(--field-ink); }
+.field-meta { font-size: 11px; line-height: 1.35; letter-spacing: .04em; color: var(--field-muted); }
+.field-reading { display: flex; align-items: baseline; gap: 4px; flex: none; }
+.field-value { font: 600 clamp(24px, 3vw, 38px)/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: -.07em; color: var(--field-ink); }
+.field-reading small { font: 11px ui-monospace, monospace; color: var(--field-muted); }
+.field-stage { position: relative; height: clamp(245px, 33vw, 405px); overflow: hidden; isolation: isolate; background: var(--field-base); }
+.field-canvas, .signal-plot-map { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+.field-canvas { pointer-events: none; }
+.field-grid { stroke: #88aca9; opacity: .18; stroke-width: .75; fill: none; }
+.field-scale { fill: none; stroke: #bcdad1; stroke-width: 1.5; }
+.field-axis-label { fill: #d2e8e0; font: 10px ui-monospace, monospace; }
+.field-north { fill: var(--field-muted); }
+.field-walls { fill: none; stroke: #e3f4ec; stroke-opacity: .76; stroke-width: 2.2; stroke-linejoin: round; pointer-events: none; }
+.signal-plot-map.can-pick { cursor: crosshair; }
+.signal-plot-point { cursor: pointer; }
+.field-hit { fill: transparent; stroke: none; }
+.field-halo { fill: var(--field-base); stroke: #edf9f0; stroke-width: 1; opacity: .95; }
+.field-dot { stroke: #f2fff7; stroke-width: 1; }
+.signal-plot-point.is-current .field-hit, .signal-plot-point:focus .field-hit { stroke: #e7fff6; stroke-width: 1.5; }
+.signal-plot-point:focus { outline: none; }
+.field-site-label { fill: #f5fff8; stroke: #133535; stroke-width: 3px; paint-order: stroke; stroke-linejoin: round; font: 600 11px ui-monospace, monospace; }
+.signal-plot-point.is-current .field-site-label { display: none; }
+.field-callout, .field-cursor { pointer-events: none; }
+.field-callout rect { fill: #092123; stroke: #9bbeb1; stroke-width: .8; }
+.field-callout text { fill: #f5fff8; font: 600 11px ui-monospace, monospace; }
+.field-cursor { fill: none; stroke: #f8fff3; stroke-width: 1.5; paint-order: stroke; filter: drop-shadow(0 1px 1px #102a26); }
+.field-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px 24px; flex-wrap: wrap; padding: 12px 18px 9px; border-top: 1px solid var(--field-line); }
+.field-foot .field-guide { flex: 1 1 185px; margin: 0; font-size: 12px; line-height: 1.6; color: var(--field-ink); }
+.field-legend { flex: 0 1 225px; min-width: 145px; font-size: 10px; color: var(--field-muted); }
+.field-legend strong { display: block; margin-bottom: 4px; font-size: 11px; font-weight: 550; color: var(--field-ink); }
+.field-ramp { height: 7px; border-radius: 3px; box-shadow: inset 0 0 0 1px #d5fff023; }
+.field-ticks { display: flex; justify-content: space-between; margin-top: 4px; font-family: ui-monospace, monospace; }
+.signal-plot-detail { padding: 0 18px 12px; min-height: 22px; font-size: 11px; line-height: 1.4; color: var(--field-muted); overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .field-head, .field-foot { padding-inline: 12px; }
+  .signal-plot-detail { padding-inline: 12px; }
+  .field-legend { flex-grow: 1; }
+  .field-stage { height: 245px; }
+}
 @media (forced-colors: active) {
-  .signal-plot { --plot-surface: Canvas; --plot-ink: CanvasText; --plot-label: CanvasText; --plot-line: GrayText; }
-  .signal-plot-ramp,
-  .signal-plot-point { forced-color-adjust: none; }
-  .signal-plot-point:focus .signal-plot-hit { stroke: Highlight; }
+  .field-ramp, .field-canvas, .signal-plot-map { forced-color-adjust: none; }
+  .signal-plot-point:focus .field-hit { stroke: Highlight; }
 }

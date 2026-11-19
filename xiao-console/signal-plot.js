@@ -1,24 +1,12 @@
-const SVG_NS = 'http://www.w3.org/2000/svg';
-const COLORS = ['#539e98', '#3b817c', '#25655f', '#134a45', '#08302d'];
-const MIN_DBM = -100;
-const DBM_STEP = 15;
-const POINT_SPACING = 30;
-const observers = new WeakMap();
+import { drawSignalField, signalColor } from './signal-field.js?v=1';
 
-const messages = {
-  signalPlotTitle: 'Signal measurement locations',
-  signalPlotEmpty: 'No measurements to plot.',
-  signalPlotOrientation: 'North ↑ · East →',
-  signalPlotLegend: 'Latest signal (dBm)',
-  signalPlotIndoor: 'East {x} m, north {y} m',
-  signalPlotGeo: 'Longitude {x}°, latitude {y}°',
-  signalPlotReading: 'Samples {count} · Latest {rssi} dBm · {time} · {location}',
-};
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const observers = new WeakMap();
 
 function svg(name, attributes = {}, text = '') {
   const node = document.createElementNS(SVG_NS, name);
   for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, value);
-  if (text) node.textContent = text;
+  node.textContent = text;
   return node;
 }
 
@@ -29,226 +17,243 @@ function html(name, className, text = '') {
   return node;
 }
 
-function signalColor(rssi) {
-  const end = COLORS.length - 1;
-  const step = Math.max(0, Math.min(end, (rssi - MIN_DBM) / DBM_STEP));
-  const index = Math.floor(step);
-  if (index === step) return COLORS[index];
-  const channels = [1, 3, 5].map((offset) => {
-    const start = parseInt(COLORS[index].slice(offset, offset + 2), 16);
-    const next = parseInt(COLORS[index + 1].slice(offset, offset + 2), 16);
-    return Math.round(start + (next - start) * (step - index));
-  });
-  return `rgb(${channels.join(', ')})`;
-}
-
-/**
- * Project WGS84 surface positions onto the local east and north tangent axes.
- * 将 WGS84 椭球面上的测量位置投影到本地的正东、正北切线轴。
- */
-function project(samples) {
+/** Project WGS84 positions onto local east and north axes, including across the date line. */
+function project(sites) {
   const radians = Math.PI / 180;
   const eccentricitySquared = 6.6943799901413165e-3;
-  const first = samples[0].point;
+  const first = sites[0].point;
   let west = 0;
   let east = 0;
   let south = first.y;
   let north = first.y;
-  for (const sample of samples) {
-    let offset = sample.point.x - first.x;
+  for (const site of sites) {
+    let offset = site.point.x - first.x;
     if (offset > 180) offset -= 360;
     if (offset < -180) offset += 360;
-    sample.east = offset;
+    site.east = offset;
     west = Math.min(west, offset);
     east = Math.max(east, offset);
-    south = Math.min(south, sample.point.y);
-    north = Math.max(north, sample.point.y);
+    south = Math.min(south, site.point.y);
+    north = Math.max(north, site.point.y);
   }
   const centerLongitude = (west + east) / 2;
   const centerLatitude = (north + south) * radians / 2;
   const sinCenter = Math.sin(centerLatitude);
   const cosCenter = Math.cos(centerLatitude);
-  for (const sample of samples) {
-    const longitude = (sample.east - centerLongitude) * radians;
-    const latitude = sample.point.y * radians;
+  for (const site of sites) {
+    const longitude = (site.east - centerLongitude) * radians;
+    const latitude = site.point.y * radians;
     const sin = Math.sin(latitude);
     const radius = 6378137 / Math.sqrt(1 - eccentricitySquared * sin ** 2);
-    const horizontal = Math.abs(sample.point.y) === 90 ? 0 : radius * Math.cos(latitude);
+    const horizontal = Math.abs(site.point.y) === 90 ? 0 : radius * Math.cos(latitude);
     const vertical = radius * (1 - eccentricitySquared) * sin;
-    sample.east = horizontal * Math.sin(longitude);
-    sample.north = vertical * cosCenter - horizontal * Math.cos(longitude) * sinCenter;
+    site.east = horizontal * Math.sin(longitude);
+    site.north = vertical * cosCenter - horizontal * Math.cos(longitude) * sinCenter;
   }
 }
 
-function measurements(points, system) {
-  const samples = [];
+/** Keep the latest reading at each physical location, independently of screen size. */
+function measuredSites(points, system) {
+  const locations = new Map();
   for (const point of points) {
-    if (!point || typeof point.time !== 'string' || ![point.x, point.y, point.rssi].every(Number.isFinite)) continue;
+    const time = Date.parse(point?.time);
+    if (!point || ![point.x, point.y, point.rssi, time].every(Number.isFinite)) continue;
     if (system === 'geo' && (Math.abs(point.x) > 180 || Math.abs(point.y) > 90)) continue;
-    const time = Date.parse(point.time);
-    if (Number.isFinite(time)) samples.push({ point, time, east: point.x, north: point.y });
+    const key = `${point.x},${point.y}`;
+    const site = locations.get(key);
+    if (site) {
+      site.count++;
+      if (time >= site.time) Object.assign(site, { point, time });
+    } else locations.set(key, { point, time, count: 1, east: point.x, north: point.y });
   }
-  if (system === 'geo' && samples.length) project(samples);
-  // Equal timestamps retain the last input reading first.
-  // 时间相同时，靠后的输入记录排在前面。
-  return samples.reverse().sort((a, b) => b.time - a.time);
+  const sites = [...locations.values()].sort((a, b) => a.time - b.time);
+  if (sites.length && system === 'geo') project(sites);
+  return sites;
 }
 
-/**
- * Group colliding marks around the newest actual observation in screen space.
- * 在屏幕上将重叠的读数归入最近的标记，各标记位于组内最新的实测坐标。
- */
-function groupSamples(samples, position, selected) {
-  const cells = new Map();
-  const groups = [];
-  let selectedGroup;
-  for (const sample of samples) {
-    const { x, y } = position(sample);
-    const col = Math.floor(x / POINT_SPACING);
-    const row = Math.floor(y / POINT_SPACING);
-    let closest;
-    let distance = POINT_SPACING ** 2;
-    for (let i = col - 1; i <= col + 1; i++) {
-      for (let j = row - 1; j <= row + 1; j++) {
-        for (const group of cells.get(`${i},${j}`) ?? []) {
-          const squared = (x - group.x) ** 2 + (y - group.y) ** 2;
-          if (squared < distance) {
-            distance = squared;
-            closest = group;
-          }
-        }
-      }
-    }
-    if (!closest) {
-      closest = { x, y, latest: sample, count: 0 };
-      groups.push(closest);
-      const key = `${col},${row}`;
-      if (!cells.has(key)) cells.set(key, []);
-      cells.get(key).push(closest);
-    }
-    closest.count++;
-    if (sample === selected) selectedGroup = closest;
-  }
-  return { groups, selectedGroup };
+function niceDistance(limit) {
+  const power = 10 ** Math.floor(Math.log10(limit));
+  const step = limit / power;
+  return (step >= 5 ? 5 : step >= 2 ? 2 : 1) * power;
 }
 
-function drawScale(plot, metersPerPixel, width, height) {
-  const target = Math.min(100, width / 3) * metersPerPixel;
-  const power = 10 ** Math.floor(Math.log10(target));
-  const step = target / power;
-  const meters = (step >= 5 ? 5 : step >= 2 ? 2 : 1) * power;
-  const length = meters / metersPerPixel;
-  const label = meters >= 1000 ? `${Number((meters / 1000).toPrecision(3))} km` : `${Number(meters.toPrecision(3))} m`;
-  plot.append(svg('path', { class: 'signal-plot-scale', d: `M16 ${height - 18} v4 h${length} v-4` }),
-    svg('text', { class: 'signal-plot-distance', x: 24 + length, y: height - 11 }, label));
+// Grid lines, compass and scale share the same metres-per-pixel transform as the observations.
+// 网格、方向和比例尺与测点共用同一个米制坐标变换。
+function drawGrid(layer, view) {
+  const { width, height, scale, px, py, eastAt, northAt } = view;
+  const major = niceDistance(Math.min(135, width / 3) * scale);
+  let path = '';
+  const stepPixels = major / scale;
+  const firstX = px(Math.ceil(eastAt(0) / major) * major);
+  const firstY = py(Math.floor(northAt(0) / major) * major);
+  for (let x = firstX; x <= width; x += stepPixels) path += `M${x} 0V${height}`;
+  for (let y = firstY; y <= height; y += stepPixels) path += `M0 ${y}H${width}`;
+  layer.append(svg('path', { class: 'field-grid', d: path }));
+  const distance = niceDistance(Math.min(100, width / 4) * scale);
+  const label = distance >= 1000 ? `${Number((distance / 1000).toPrecision(3))} km` : `${Number(distance.toPrecision(3))} m`;
+  layer.append(svg('path', { class: 'field-scale', d: `M16 ${height - 18}v4h${distance / scale}v-4` }),
+    svg('text', { class: 'field-axis-label', x: 16, y: height - 23 }, label));
+  const compass = svg('g', { transform: `translate(${width - 20} 19)`, 'aria-hidden': true });
+  compass.append(svg('text', { class: 'field-axis-label', 'text-anchor': 'middle', y: 0 }, 'N'),
+    svg('path', { class: 'field-north', d: 'M0 5l-4 12 4-3 4 3z' }));
+  layer.append(compass);
 }
 
-function legend(text) {
-  const box = html('div', 'signal-plot-legend');
-  const ramp = html('div', 'signal-plot-ramp');
-  const ticks = html('div', 'signal-plot-ticks');
-  const stops = COLORS.map((color, i) => `${color} ${(i + 0.5) * 100 / COLORS.length}%`);
-  ramp.style.backgroundImage = `linear-gradient(to right, ${stops.join(', ')})`;
+function drawExamplePlan(layer, { px, py }) {
+  const walls = [
+    [[-0.6, -0.55], [12.6, -0.55], [12.6, 6.55], [-0.6, 6.55], [-0.6, -0.55]],
+    [[5.1, 6.55], [5.1, 2.5]], [[5.1, 1.4], [5.1, -0.55]],
+    [[9.1, 6.55], [9.1, 4.4]], [[9.1, 3.3], [9.1, 1.5], [12.6, 1.5]],
+  ];
+  const d = walls.map((wall) => wall.map(([x, y], i) => `${i ? 'L' : 'M'}${px(x)} ${py(y)}`).join(' ')).join(' ');
+  layer.append(svg('path', { class: 'field-walls', d }));
+}
+
+// The legend covers the recorded levels with at least 30 dB of contrast range.
+// 色标包含各测点读数，并保留至少 30 dB 的跨度。
+function signalDomain(sites) {
+  if (sites.length < 2) return [-100, -20];
+  let low = Infinity, high = -Infinity;
+  for (const { point } of sites) { low = Math.min(low, point.rssi); high = Math.max(high, point.rssi); }
+  const span = Math.max(30, Math.ceil((high - low) / 10) * 10);
+  const min = Math.floor(((low + high - span) / 2) / 5) * 5;
+  return [min, Math.max(min + span, Math.ceil(high / 5) * 5)];
+}
+
+function legend(t, domain) {
+  const legend = html('div', 'field-legend');
+  const ramp = html('div', 'field-ramp');
+  const level = (fraction) => domain[0] + fraction * (domain[1] - domain[0]);
+  const ticks = [0, .25, .5, .75, 1].map((fraction) => Number(level(fraction).toFixed(1)));
+  ramp.style.backgroundImage = `linear-gradient(90deg, ${Array.from({ length: 21 }, (_, i) => signalColor(level(i / 20), domain)).join(',')})`;
   ramp.setAttribute('aria-hidden', 'true');
-  COLORS.forEach((_, i) => {
-    const bound = i === 0 ? '≤' : i === COLORS.length - 1 ? '≥' : '';
-    ticks.append(html('span', 'signal-plot-tick', `${bound}${MIN_DBM + i * DBM_STEP}`));
-  });
-  box.append(html('strong', 'signal-plot-legend-title', text('signalPlotLegend')), ramp, ticks);
-  return box;
+  const labels = html('div', 'field-ticks');
+  ticks.forEach((dbm, i) => labels.append(html('span', '', `${i === 0 ? '≤' : i === 4 ? '≥' : ''}${dbm}`)));
+  legend.append(html('strong', '', t('signalPlotLegend')), ramp, labels);
+  return legend;
 }
 
-/**
- * Render one source in a dedicated div. The caller supplies its coordinate system and translations.
- * 在专用容器内绘制单一来源的读数，由调用方提供坐标系和翻译。
- */
-export function renderSignalPlot(container, points, system, translate) {
-  if (system !== 'indoor' && system !== 'geo') throw new RangeError('Unknown signal plot coordinate system');
-  function text(key, params = {}) {
-    const value = translate?.(key, params);
-    if (typeof value === 'string' && value && value !== key) return value;
-    return messages[key].replace(/\{(\w+)\}/g, (_, name) => String(params[name]));
-  }
-
-  const samples = measurements(points, system);
-  const figure = html('figure', 'signal-plot');
-  figure.setAttribute('aria-label', text('signalPlotTitle'));
+/** Render the map and return a lightweight setter for the proposed indoor recording position. */
+export function renderSignalPlot(container, points, system, t, { example = false, title = '', onPick } = {}) {
   observers.get(container)?.disconnect();
   observers.delete(container);
+  const sites = measuredSites(points, system);
+  const domain = signalDomain(sites);
+  const figure = html('figure', 'signal-plot');
+  figure.setAttribute('aria-label', t('signalPlotTitle'));
+  const head = html('header', 'field-head');
+  const identity = html('div', 'field-identity');
+  identity.append(html('span', 'field-meta', t(example ? 'mapSimulated' : 'mapMeasuredSites', { count: sites.length })),
+    html('strong', 'field-title', title));
+  const reading = html('div', 'field-reading');
+  const value = html('strong', 'field-value', '—');
+  reading.append(value, html('small', '', 'dBm'));
+  head.append(identity, reading);
+  const stage = html('div', 'field-stage');
+  const field = html('canvas', 'field-canvas');
+  field.setAttribute('aria-hidden', 'true');
+  const plot = svg('svg', { class: 'signal-plot-map', role: 'group', 'aria-label': t('signalPlotTitle') });
+  if (onPick) plot.classList.add('can-pick');
+  stage.append(field, plot);
+  const foot = html('div', 'field-foot');
+  const guide = html('p', 'field-guide');
+  foot.append(guide, legend(t, domain));
+  const detail = html('figcaption', 'signal-plot-detail');
+  figure.append(head, stage, foot, detail);
   container.replaceChildren(figure);
-  if (!samples.length) {
-    figure.append(html('p', 'signal-plot-empty', text('signalPlotEmpty')), legend(text));
-    return;
-  }
 
-  const plot = svg('svg', { class: 'signal-plot-map', role: 'group', 'aria-label': text('signalPlotTitle') });
-  const detail = html('p', 'signal-plot-detail');
-  figure.append(html('div', 'signal-plot-orientation', text('signalPlotOrientation')), plot, legend(text), detail);
-  let west = samples[0].east;
-  let east = west;
-  let south = samples[0].north;
-  let north = south;
-  for (const sample of samples) {
-    west = Math.min(west, sample.east);
-    east = Math.max(east, sample.east);
-    south = Math.min(south, sample.north);
-    north = Math.max(north, sample.north);
+  let selected = sites.at(-1);
+  let cursor;
+  let proposed;
+  let view;
+  function moveCursor(east, north) {
+    proposed = { east, north };
+    if (!cursor || !view) return;
+    const visible = onPick && [east, north].every(Number.isFinite) &&
+      !sites.some((site) => site.east === east && site.north === north);
+    cursor.style.display = visible ? '' : 'none';
+    if (visible) cursor.setAttribute('transform', `translate(${view.px(east)} ${view.py(north)})`);
   }
-  let selected = samples[0];
-  let lastWidth = 0;
-  let lastHeight = 0;
-
   function draw() {
-    const width = plot.clientWidth || 320;
-    const height = plot.clientHeight || 220;
-    if (width === lastWidth && height === lastHeight) return;
-    lastWidth = width;
-    lastHeight = height;
-    const restoreFocus = plot.contains(document.activeElement);
-    const innerWidth = Math.max(1, width - 36);
-    const innerHeight = Math.max(1, height - 64);
-    const metersPerPixel = Math.max((east - west) / innerWidth, (north - south) / innerHeight) || 1 / 24;
-    const { groups, selectedGroup } = groupSamples(samples, (sample) => ({
-      x: width / 2 + ((sample.east - west) - (east - west) / 2) / metersPerPixel,
-      y: 18 + innerHeight / 2 - ((sample.north - south) - (north - south) / 2) / metersPerPixel,
-    }), selected);
-    plot.replaceChildren();
+    const width = stage.clientWidth;
+    const height = stage.clientHeight;
+    if (!width || !height || (view?.width === width && view.height === height)) return;
+    const focus = plot.contains(document.activeElement);
+    let west = sites[0]?.east ?? 0, east = west, south = sites[0]?.north ?? 0, north = south;
+    for (const site of sites) {
+      west = Math.min(west, site.east); east = Math.max(east, site.east);
+      south = Math.min(south, site.north); north = Math.max(north, site.north);
+    }
+    const scale = Math.max((east - west) / Math.max(1, width - 100), (north - south) / Math.max(1, height - 92)) || 6 / Math.max(1, height - 92);
+    const centerX = (west + east) / 2, centerY = (south + north) / 2;
+    const px = (x) => width / 2 + (x - centerX) / scale;
+    const py = (y) => height / 2 - (y - centerY) / scale;
+    view = { width, height, scale, px, py, eastAt: (x) => centerX + (x - width / 2) * scale, northAt: (y) => centerY - (y - height / 2) * scale };
     plot.setAttribute('viewBox', `0 0 ${width} ${height}`);
-    drawScale(plot, metersPerPixel, width, height);
+    plot.replaceChildren();
+    const pixels = sites.map((site) => ({ x: px(site.east), y: py(site.north), rssi: site.point.rssi }));
+    const mode = drawSignalField(field, pixels, width, height, domain);
+    figure.dataset.coverage = mode;
+    guide.textContent = t({ empty: 'mapFieldEmpty', point: 'mapFieldPoint', line: 'mapFieldLine', area: 'mapFieldArea' }[mode]);
+    drawGrid(plot, view);
+    if (example) drawExamplePlan(plot, view);
     let current;
-    for (const group of groups) {
-      const { point } = group.latest;
-      const location = text(system === 'geo' ? 'signalPlotGeo' : 'signalPlotIndoor', { x: point.x, y: point.y });
-      const label = text('signalPlotReading', { count: group.count, rssi: point.rssi, time: point.time, location });
-      const mark = svg('g', { class: 'signal-plot-point', transform: `translate(${group.x} ${group.y})`,
-        tabindex: 0, role: 'img', 'aria-label': label });
-      mark.append(svg('title', {}, label), svg('circle', { r: 14, class: 'signal-plot-hit' }),
-        svg('circle', { r: group.count > 1 ? 13 : 6, fill: signalColor(point.rssi), class: 'signal-plot-dot' }));
-      if (group.count > 1) {
-        mark.append(svg('circle', { r: 9, class: 'signal-plot-center' }),
-          svg('text', { class: 'signal-plot-count', y: 3.5 }, group.count > 99 ? '99+' : String(group.count)));
+    const callout = svg('g', { class: 'field-callout', 'aria-hidden': true });
+    const tag = svg('text', { x: 8, y: 15 });
+    callout.append(svg('rect', { width: 65, height: 23, rx: 5 }), tag);
+    for (const [i, site] of sites.entries()) {
+      const { point } = site;
+      const { x, y } = pixels[i];
+      const location = t(system === 'geo' ? 'signalPlotGeo' : 'signalPlotIndoor', { x: point.x, y: point.y });
+      const label = example ? `${location} · ${point.rssi} dBm` : t('signalPlotReading', { count: site.count, rssi: point.rssi,
+        time: new Date(site.time).toLocaleTimeString(document.documentElement.lang), location });
+      const mark = svg('g', { class: 'signal-plot-point', transform: `translate(${x} ${y})`, tabindex: 0, role: 'button', 'aria-label': label });
+      mark.append(svg('title', {}, label), svg('circle', { r: 13, class: 'field-hit' }),
+        svg('circle', { r: 9, class: 'field-halo' }), svg('circle', { r: 5.5, class: 'field-dot', fill: signalColor(point.rssi, domain) }));
+      if (sites.length <= 5 && !pixels.some((other, j) => i !== j && Math.abs(other.x - x) < 75 && Math.abs(other.y - y) < 28)) {
+        const left = x + 65 > width;
+        mark.append(svg('text', { class: 'field-site-label', x: left ? -10 : 10, y: -11,
+          'text-anchor': left ? 'end' : 'start' }, `${point.rssi} dBm`));
       }
       function select() {
         current?.classList.remove('is-current');
         current = mark;
         mark.classList.add('is-current');
-        selected = group.latest;
+        selected = site;
+        value.textContent = point.rssi;
+        tag.textContent = `${point.rssi} dBm`;
+        callout.setAttribute('transform', `translate(${Math.max(2, Math.min(width - 67, x + 11))} ${Math.max(2, y - 31)})`);
         detail.textContent = label;
       }
+      const activate = () => { select(); onPick?.(point.x, point.y); };
+      mark.addEventListener('pointerenter', select);
       mark.addEventListener('focus', select);
-      mark.addEventListener('click', select);
+      mark.addEventListener('click', (event) => { event.stopPropagation(); activate(); });
+      mark.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); activate(); }
+      });
       plot.append(mark);
-      if (group === selectedGroup) {
-        select();
-        if (restoreFocus) mark.focus({ preventScroll: true });
-      }
+      if (site === selected) { select(); if (focus) mark.focus({ preventScroll: true }); }
     }
+    if (sites.length) plot.append(callout);
+    cursor = svg('g', { class: 'field-cursor', 'aria-hidden': true });
+    cursor.append(svg('circle', { r: 8 }), svg('path', { d: 'M-13 0h7m12 0h7M0 -13v7m0 12v7' }));
+    plot.append(cursor);
+    moveCursor(proposed?.east, proposed?.north);
+    if (!sites.length) detail.textContent = t(onPick ? 'mapFieldPick' : 'signalPlotEmpty');
   }
-
+  if (onPick) plot.addEventListener('click', (event) => {
+    if (!view) return;
+    const rect = plot.getBoundingClientRect();
+    const east = view.eastAt((event.clientX - rect.left) * view.width / rect.width);
+    const north = view.northAt((event.clientY - rect.top) * view.height / rect.height);
+    onPick(Number(east.toFixed(1)), Number(north.toFixed(1)));
+  });
   draw();
   if (typeof ResizeObserver !== 'undefined') {
     const observer = new ResizeObserver(draw);
-    observer.observe(plot);
+    observer.observe(stage);
     observers.set(container, observer);
   }
+  return moveCursor;
 }

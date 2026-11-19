@@ -1,4 +1,12 @@
-import { renderSignalPlot } from './signal-plot.js?v=1';
+import { renderSignalPlot } from './signal-plot.js?v=2';
+
+// Display-only example coordinates (metres) and signal levels (dBm).
+// 示例仅用于展示，坐标单位为米，信号强度单位为 dBm。
+const EXAMPLE = [
+  [0, 0, -63], [4, 0, -58], [8, 0, -72], [12, 0, -83],
+  [0, 3, -50], [3, 3, -41], [6, 3, -55], [9, 3, -72], [12, 3, -81],
+  [0, 6, -54], [3, 6, -48], [6, 6, -61], [9, 6, -68], [12, 6, -75],
+].map(([x, y, rssi], index) => ({ x, y, rssi, time: new Date(Date.UTC(2000, 0, 1, 0, index)).toISOString() }));
 
 const STORAGE_PREFIX = 'xiao.signal-map.v1.';
 const ADDRESS = /^(?:[\da-f]{2}:){5}[\da-f]{2}$/i;
@@ -35,6 +43,9 @@ export function setupSignalMap({ translate: t, exportCsv, scan, stop }) {
   let params = {};
   let optionsDirty = true;
   let plotDirty = true;
+  let example = new URLSearchParams(location.search).get('map') === 'example';
+  let setPlotPosition;
+  x.value = y.value = '0';
   let storageFailed = false;
   let lastReading = null;
   const system = () => position.value === 'indoor' ? 'indoor' : 'geo';
@@ -89,8 +100,24 @@ export function setupSignalMap({ translate: t, exportCsv, scan, stop }) {
     const visible = currentPoints();
     byId('count').textContent = t('mapCount', { count: visible.length });
     byId('export').disabled = byId('clear').disabled = !visible.length;
-    byId('details').hidden = !visible.length;
-    renderSignalPlot(byId('plot'), visible, system(), t);
+    byId('details').hidden = example || !visible.length;
+    byId('tools').hidden = byId('history').hidden = example;
+    byId('view-live').setAttribute('aria-pressed', String(!example));
+    byId('view-example').setAttribute('aria-pressed', String(example));
+    const source = live[radio.value].get(target.value) || visible.findLast((point) => point.name)?.name || target.value;
+    setPlotPosition = renderSignalPlot(byId('plot'), example ? EXAMPLE : visible, example ? 'indoor' : system(), t, {
+      example,
+      title: example ? t('mapExamplePlan') : source || t('mapViewLive'),
+      onPick: !example && system() === 'indoor' ? (east, north) => {
+        if (pending) return;
+        x.value = east;
+        y.value = north;
+        finish();
+        setPlotPosition?.(east, north);
+        render();
+      } : null,
+    });
+    setPlotPosition(x.valueAsNumber, y.valueAsNumber);
     const labelX = t(system() === 'indoor' ? 'mapX' : 'mapLon');
     const labelY = t(system() === 'indoor' ? 'mapY' : 'mapLat');
     byId('x-label').textContent = byId('col-x').textContent = labelX;
@@ -117,11 +144,12 @@ export function setupSignalMap({ translate: t, exportCsv, scan, stop }) {
     byId('coordinates').hidden = automatic;
     byId('scan').textContent = t(active ? 'mapStop' : 'mapListen');
     byId('scan').disabled = !device.ready || device.busy || (!active && !idle);
-    byId('record').disabled = !active || device.busy || !target.value || !coordsValid || !!pending;
+    byId('view-example').disabled = !!pending;
+    byId('record').disabled = example || !active || device.busy || !target.value || !coordsValid || !!pending;
     radio.disabled = !!device.ready && !idle;
     target.disabled = position.disabled = x.disabled = y.disabled = !!pending;
     const hint = !device.ready ? 'mapConnect' : !active ? (idle ? 'mapStartHint' : 'mapOtherTask')
-      : !target.value ? 'mapSelectHint' : !coordsValid ? 'mapCoordHint' : 'mapReady';
+      : !target.value ? 'mapSelectHint' : !coordsValid ? 'mapCoordHint' : system() === 'indoor' ? 'mapReady' : 'mapReadyGeo';
     let text = t(message || hint, params);
     if (active && lastReading) text += ` · ${t('mapLatest', { rssi: lastReading.rssi, time: new Date(lastReading.time).toLocaleTimeString(device.locale) })}`;
     if (storageFailed) text += ` ${t('mapStorageFailed')}`;
@@ -144,7 +172,6 @@ export function setupSignalMap({ translate: t, exportCsv, scan, stop }) {
     catch { storageFailed = true; }
     plotDirty = true;
     finish('mapRecorded', { rssi: sample.rssi, x: sample.x, y: sample.y });
-    render();
   }
 
   function observe(kind, mac, rawName, rssi, channel = null) {
@@ -188,6 +215,14 @@ export function setupSignalMap({ translate: t, exportCsv, scan, stop }) {
     }, failed, { enableHighAccuracy: true, maximumAge: 0, timeout: 12000 });
   }
 
+  for (const mode of ['live', 'example']) {
+    byId(`view-${mode}`).addEventListener('click', () => {
+      if (pending || example === (mode === 'example')) return;
+      example = mode === 'example';
+      plotDirty = true;
+      render();
+    });
+  }
   byId('record').addEventListener('click', record);
   byId('scan').addEventListener('click', () => {
     finish();
@@ -199,7 +234,8 @@ export function setupSignalMap({ translate: t, exportCsv, scan, stop }) {
     field.addEventListener(field === x || field === y ? 'input' : 'change', () => {
       finish();
       if (field === radio) { target.value = ''; optionsDirty = true; }
-      if (field === position) { x.value = ''; y.value = ''; }
+      if (field === position) x.value = y.value = system() === 'indoor' ? '0' : '';
+      if (field === x || field === y) setPlotPosition?.(x.valueAsNumber, y.valueAsNumber);
       if (field === radio || field === target) lastReading = null;
       if (field !== x && field !== y) plotDirty = true;
       render();
