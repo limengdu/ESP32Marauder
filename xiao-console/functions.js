@@ -97,6 +97,16 @@ export function setupFunctions({ translate, execute }) {
 
   const utf8 = new TextEncoder();
 
+  function measuredTargets() {
+    return [...device.networks.values()].filter((ap) => hasRadioObservation(ap) &&
+      channelChoices.includes(String(ap.channel)) && /^(?:[\da-f]{2}:){5}[\da-f]{2}$/i.test(ap.bssid) &&
+      !(parseInt(ap.bssid.slice(0, 2), 16) & 1) && ap.bssid !== '00:00:00:00:00:00');
+  }
+
+  function targetName(ap) {
+    return (!ap.hidden && ap.name) || ap.knownName || '';
+  }
+
   function choices(field) {
     if (!field) return [];
     if (!field.networks) return field.choices.map((choice) => Array.isArray(choice) ? choice : [choice, choice]);
@@ -203,18 +213,23 @@ export function setupFunctions({ translate, execute }) {
         } : null,
       };
     }
-    const selfTest = mode === 'selftest';
-    if (!selfTest && mode !== 'manual') return { request: resolve(operation, mode) };
-    const address = (selfTest ? motion.motionBssid.value : input).trim().toLowerCase();
+    const selfTest = motion.motionMethod.value === 'selftest';
+    const picked = mode !== 'manual' ? device.networks.get(mode) : null;
+    if (mode !== 'manual' && (!picked || !hasRadioObservation(picked))) return {};
+    if (picked && !selfTest) {
+      if (Number.isInteger(picked.index) && picked.index >= 0) return { request: resolve(operation, mode) };
+      return { request: { command: operation.command, operation: { ...operation, radioTarget: { bssid: picked.bssid, channel: picked.channel } } } };
+    }
+    const address = (picked ? picked.bssid : selfTest ? motion.motionBssid.value : input).trim().toLowerCase();
     const isAddress = /^(?:[\da-f]{2}:){5}[\da-f]{2}$/.test(address);
     const unicast = isAddress && !(parseInt(address.slice(0, 2), 16) & 1) && address !== '00:00:00:00:00:00';
     if (selfTest) {
-      const ssid = motion.motionSsid.value;
+      const ssid = (picked && targetName(picked)) || motion.motionSsid.value;
       const quotedSsid = /[\x00-\x1f\x7f]/.test(ssid) ? null : quoteCliValue(ssid, 32, true);
-      const channel = motion.motionChannel.value;
+      const channel = picked ? String(picked.channel) : motion.motionChannel.value;
       const command = 'csimotion selftest';
       return {
-        hint: 'motionSelfTestHint', showChannel: true,
+        hint: 'motionSelfTestHint', showChannel: !picked,
         request: quotedSsid && unicast && channelChoices.includes(channel) ? {
           command, preview: `${command} <index> ${quotedSsid}`,
           operation: { ...operation, radioTarget: { bssid: address, channel: Number(channel), quotedSsid }, duration: 60 },
@@ -258,34 +273,46 @@ export function setupFunctions({ translate, execute }) {
       const { operation, select, ssidInput, passwordInput, preview, run, confirm } = control;
       if (select && operation.field.networks) {
         const defaultOptionKey = operation.field.emptyLabel ?? 'chooseNetwork';
-        const options = choices(operation.field);
+        const options = control.motion ? measuredTargets()
+          .sort((a, b) => (targetName(a) || a.bssid).localeCompare(targetName(b) || b.bssid) || a.bssid.localeCompare(b.bssid))
+          .map((ap) => [ap.bssid, `${targetName(ap) || translate('hiddenNetwork')} · ${translate('bandChannel', { channel: ap.channel })} · ${ap.bssid}`]) : choices(operation.field);
+        const placeholder = control.motion ? (options.length ? translate('motionPickScanned', { count: options.length }) : translate('motionNoScanned')) : translate(defaultOptionKey);
         if (control.motion) {
-          options.unshift(['manual', translate('motionManualOption')], ['join', translate('motionJoinOption')], ['selftest', translate('motionSelfTestOption')]);
-          if (device.wifiConnected) options.unshift(['connected', [translate('motionCurrentOption'), device.wifiSsid].filter(Boolean).join(' · ')]);
+          if (control.motion.motionMethod.value !== 'selftest') {
+            if (device.wifiConnected) options.push(['connected', [translate('motionCurrentOption'), device.wifiSsid].filter(Boolean).join(' · ')]);
+            options.push(['join', translate('motionJoinOption')]);
+          }
+          options.push(['manual', translate('motionManualOption')]);
         }
-        const signature = JSON.stringify([translate(defaultOptionKey), options]);
+        const signature = JSON.stringify([placeholder, options]);
         if (control.signature !== signature) {
           const previous = select.value;
           control.signature = signature;
-          select.replaceChildren(new Option(translate(defaultOptionKey), ''), ...options.map(([id, label]) => new Option(label, id)));
+          select.replaceChildren(new Option(placeholder, ''), ...options.map(([id, label]) => new Option(label, id)));
           if (options.some(([id]) => id === previous)) select.value = previous;
         }
       }
       if (control.motion) {
         const { motionTarget, motionChannel, motionPassword, motionSsid, motionBssid } = control.motion;
         const joining = select.value === 'join';
-        const selfTest = select.value === 'selftest';
+        const selfTest = control.motion.motionMethod.value === 'selftest';
+        const manual = select.value === 'manual';
+        const picked = device.networks.get(select.value);
         control.description.hidden = selfTest;
-        motionSsid.parentElement.hidden = !selfTest;
-        motionBssid.parentElement.hidden = !selfTest;
-        motionTarget.parentElement.hidden = select.value !== 'manual' && !joining;
+        const scanning = device.taskKind === 'beacon' && device.task === 'scanning';
+        control.motion.motionScan.textContent = translate(scanning ? 'motionFinishScan' : 'motionScanNearby');
+        control.motion.motionScan.disabled = scanning ? !device.ready || device.busy : !permitted(operation);
+        motionSsid.parentElement.hidden = !selfTest || !(manual || (picked && !targetName(picked)));
+        motionBssid.parentElement.hidden = !selfTest || !manual;
+        motionTarget.parentElement.hidden = !(manual && !selfTest) && !joining;
         motionTarget.previousElementSibling.textContent = translate(joining ? 'wifiSsid' : 'motionTargetName');
         motionPassword.parentElement.hidden = !joining;
         if (!joining) motionPassword.value = '';
         const { request, hint, showChannel } = resolveMotion(control);
         motionChannel.parentElement.hidden = !showChannel;
-        control.hint.textContent = hint ? translate(hint) : '';
-        control.hint.hidden = !hint;
+        const message = hint || (selfTest ? 'motionSelfTestHint' : '');
+        control.hint.textContent = message ? translate(message) : '';
+        control.hint.hidden = !message;
         preview.textContent = request?.preview ?? request?.command ?? '';
         run.disabled = !request || !permitted(operation);
         continue;
@@ -344,7 +371,19 @@ export function setupFunctions({ translate, execute }) {
       motion = form.elements;
       motion.motionChannel.append(...channelChoices.map((value) => new Option(value, value)));
       motion.motionTarget.addEventListener('input', () => { motion.motionChannel.value = ''; });
-      select.addEventListener('change', () => { motion.motionChannel.value = ''; });
+      select.addEventListener('change', () => {
+        motion.motionChannel.value = '';
+        motion.motionSsid.value = '';
+        motion.motionBssid.value = '';
+      });
+      motion.motionScan.addEventListener('click', () => {
+        if (device.taskKind === 'beacon' && device.task === 'scanning') {
+          execute('stopscan', { during: 'any' });
+          return;
+        }
+        if (!permitted(operation) || (device.wifiConnected && !window.confirm(translate('motionScanSwitch')))) return;
+        execute('sniffbeacon', { task: 'beacon', action: 'dual', duration: 30 });
+      });
     }
     if (operation.ssid) {
       const label = document.createElement('label');

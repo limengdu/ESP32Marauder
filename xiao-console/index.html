@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>XIAO Control</title>
   <link rel="stylesheet" href="style.css?v=10">
-  <script type="module" src="app.js?v=17"></script>
+  <script type="module" src="app.js?v=18"></script>
 </head>
 <body>
   <div class="app">
@@ -108,6 +108,10 @@
               <div class="motion-metrics"><span><small data-i18n="motionScore">MOTION</small><strong id="motion-score">—</strong></span><span><small data-i18n="motionReliability">RELIABILITY</small><strong id="motion-reliability">—</strong></span><span><small data-i18n="motionRate">SAMPLES/S</small><strong id="motion-rate">—</strong></span><span><small data-i18n="motionCalibration">CALIBRATION</small><strong id="motion-calibration">—</strong></span></div>
             </div>
             <template id="motion-target-inputs">
+              <button type="button" class="button secondary" name="motionScan" data-i18n="motionScanNearby">Scan nearby Wi-Fi (30 s)</button>
+              <label class="operation-field"><span data-i18n="motionMethodLabel">Sensing mode</span>
+                <select name="motionMethod"><option value="passive" data-i18n="motionPassiveOption">Passive listening</option><option value="selftest" data-i18n="motionSelfTestOption">Gateway self-test (60 seconds)</option></select>
+              </label>
               <label class="operation-field" hidden><span data-i18n="motionTargetName">Wi-Fi name or radio address (BSSID)</span>
                 <input name="motionTarget" autocomplete="off" spellcheck="false">
               </label>

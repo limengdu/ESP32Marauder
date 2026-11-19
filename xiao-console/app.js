@@ -1,5 +1,5 @@
 import { setupMonitor } from './monitor.js?v=10';
-import { hasRadioObservation, setupFunctions } from './functions.js?v=14';
+import { hasRadioObservation, setupFunctions } from './functions.js?v=15';
 import { setupCapture } from './capture.js?v=10';
 import { SerialPcapDecoder } from './pcap.js?v=10';
 
@@ -12,7 +12,7 @@ const LOG_LIMIT = 5000;
 const WIFI_LIVE_TASKS = new Set(['wifi', 'dual', 'beacon']);
 
 const MAC = '(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}';
-const NETWORK_LINE = new RegExp(`^(-?\\d+) Ch: (\\d+) (${MAC}) ESSID: (.*?)(?:\\s+[0-9A-F]{2} [0-9A-F]{2})?\\s*$`);
+const NETWORK_LINE = new RegExp(`^(-?\\d+) Ch: (\\d+) (${MAC}) ESSID: ?(.*?)(?:\\s+[0-9A-F]{2} [0-9A-F]{2})?\\s*$`);
 const STATION_LINE = new RegExp(`^\\d+: (?:ap: (${MAC}) -> sta: (${MAC})|sta: (${MAC}) -> ap: (${MAC}))`);
 const LIST_LINE = /^\[(\d+)\]\[CH:(\d+)\] (.*) (-?\d+)( \(selected\))?$/;
 const BLE_LIST_LINE = /^\[(\d+)\]\[RSSI:(-?\d+)\] (.*)$/;
@@ -96,6 +96,7 @@ const state = {
   scanEndsAt: 0,
   scanTimer: 0,
   networks: new Map(),
+  radioNames: new Map(),
   waiter: null,
   info: null,
   progress: null,
@@ -1013,6 +1014,10 @@ function upsertNetwork(bssid, values) {
   const key = bssid.toLowerCase();
   const network = state.networks.get(key) ?? { bssid: key, name: '', hidden: false, rssi: -100, channel: 0, clients: new Set(), stations: 0, security: '' };
   Object.assign(network, values);
+  // Keep a name learned for this exact radio while new beacons supply the live channel.
+  // 将已知名称保留在同一无线地址上，信道以本轮扫描为准。
+  if (values.name && !values.hidden) state.radioNames.set(key, values.name);
+  network.knownName = state.radioNames.get(key) || '';
   state.networks.set(key, network);
   return network;
 }
@@ -1326,6 +1331,7 @@ async function handleLost(error) {
 
 function resetDeviceResults() {
   state.networks.clear();
+  state.radioNames.clear();
   state.listEntries.clear();
   state.bluetooth.clear();
   state.lanHosts.clear();
@@ -1942,6 +1948,7 @@ async function runAction(command, operation = {}) {
         await executeCommand('stopscan', { echo: false, timeout: 6000 });
       } else if (command === 'clearlist -a') {
         state.networks.clear();
+        state.radioNames.clear();
         state.listEntries.clear();
         state.scanStartedAt = 0;
       } else if (command === 'clearlist -c') {
