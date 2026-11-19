@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>XIAO Control</title>
+  <link rel="stylesheet" href="style.css?v=8">
+  <script type="module" src="app.js?v=8"></script>
+</head>
+<body>
+  <div class="app">
+    <main class="main">
+      <header class="topbar">
+        <div class="brand"><div class="brand-mark"><svg viewBox="0 0 24 24" fill="none"><path d="M5 5l14 14M19 5L5 19M9 12h6M12 9v6" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></div><div><strong>XIAO</strong><span>CONTROL CENTER</span></div></div>
+        <nav class="page-nav" data-label="workspace" aria-label="Workspace">
+          <a class="nav-link active" href="#functions" aria-current="page" data-i18n="functionLibrary">Basic commands</a>
+          <a class="nav-link" href="#networks" data-i18n="networkTitle">Wi-Fi results</a>
+          <a class="nav-link" href="#advanced" data-i18n="advancedPage">Advanced tools</a>
+          <a class="nav-link" href="#overview" data-i18n="overview">Overview</a>
+        </nav>
+        <div class="topbar-tools"><div class="language-toggle" role="group" data-label="language" aria-label="Language"><button type="button" data-locale="zh-CN" lang="zh-CN" aria-pressed="false">&#20013;&#25991;</button><button type="button" data-locale="en" lang="en" aria-pressed="true">English</button></div><div class="top-status"><span id="top-dot" class="dot"></span><span id="top-status" data-i18n="disconnected">Disconnected</span></div></div>
+      </header>
+      <div class="workspace" id="workspace">
+      <div class="content" id="workspace-content">
+        <div id="notice" class="notice" role="status" hidden></div>
+        <section class="device-card workspace-device" aria-labelledby="device-heading"><div class="device-icon"><svg viewBox="0 0 32 32" fill="none"><rect x="8" y="5" width="16" height="22" rx="3"/><rect x="12" y="10" width="8" height="9" rx="1"/><path d="M12 23h.01M16 23h.01M20 23h.01M5 10h3M5 15h3M5 20h3M24 10h3M24 15h3M24 20h3" stroke-linecap="round"/></svg></div><div class="device-info"><div class="device-title"><h2 id="device-heading">XIAO ESP32-C5</h2><span id="device-badge" class="badge" data-i18n="disconnected">Disconnected</span><span id="task-inline" class="badge" hidden></span></div><p id="device-detail" data-i18n="deviceHint">Connect your device to get started.</p></div><button id="connect" class="button primary"><span class="button-icon">＋</span><span data-i18n="connect">Connect device</span></button><button id="disconnect" class="button secondary" hidden data-i18n="disconnect">Disconnect</button></section>
+        <section id="overview" data-view>
+        <section class="stats" data-label="deviceStatus" aria-label="Device status"><div class="stat"><span class="stat-label" data-i18n="firmware">FIRMWARE</span><strong id="firmware">—</strong><span class="stat-note" data-i18n="firmwareNote">Marauder version</span></div><div class="stat"><span class="stat-label" data-i18n="task">CURRENT TASK</span><strong id="task" data-i18n="idle">Idle</strong><span class="stat-note" id="task-note" data-i18n="taskNote">Ready when you are</span></div><div class="stat"><span class="stat-label" data-i18n="gps">GPS MODULE</span><strong id="gps" data-i18n="unknown">Unknown</strong><span class="stat-note" data-i18n="gpsNote">Optional accessory</span></div><div class="stat"><span class="stat-label" data-i18n="found">NETWORKS FOUND</span><strong id="count">—</strong><span class="stat-note" data-i18n="foundNote">In the current result</span></div></section>
+        </section>
+        <section class="panel networks" id="networks" data-view hidden><div class="panel-header"><div><div class="section-kicker"><span>01</span> <span data-i18n="discovery">DISCOVERY</span></div><h2 data-i18n="networkTitle">Wi-Fi networks</h2><p data-i18n="networkDescription">Scan nearby networks with a timed or manual stop and inspect details at a glance.</p></div><div class="actions"><label class="scan-duration"><span data-i18n="scanDuration">Scan duration</span><select id="scan-duration"><option value="15">15 s</option><option value="30" selected>30 s</option><option value="60">60 s</option><option value="120">120 s</option><option value="300">300 s</option><option value="0" data-i18n="captureUntilStopped">Until stopped</option></select></label><button id="start" class="button primary" disabled><span class="button-icon">↗</span><span data-i18n="startScan">Start scan</span></button><button id="stop" class="button secondary" disabled data-i18n="stopScan">Stop and show results</button></div></div><div class="toolbar"><label class="search"><svg viewBox="0 0 24 24" fill="none"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><input id="search" type="search" data-placeholder="searchPlaceholder" placeholder="Search networks" aria-label="Search networks"></label><label class="band-filter"><span data-i18n="bandLabel">Band</span><select id="band-filter"><option value="" data-i18n="allBands">All bands</option><option value="2.4">2.4 GHz</option><option value="5">5 GHz</option></select></label><span class="result-caption" id="result-caption" data-i18n="noResults">No results yet</span><div class="result-tools"><button id="refresh-results" class="text-button" disabled data-i18n="refreshResults">Read device results</button><button id="export-results" class="text-button" disabled data-i18n="exportResults">Export CSV</button></div></div><div class="table-wrap"><table><thead><tr><th data-i18n="name">NETWORK</th><th data-i18n="address">ADDRESS</th><th data-i18n="channel">CHANNEL</th><th><button id="sort-signal" class="sort" data-i18n="signal">SIGNAL ↕</button></th><th data-i18n="clients">CLIENTS</th><th data-i18n="security">SECURITY</th><th data-i18n="details">DETAILS</th></tr></thead><tbody id="network-rows"></tbody></table><div class="empty" id="empty"><div class="empty-icon"><svg viewBox="0 0 32 32" fill="none"><path d="M5 12a17 17 0 0 1 22 0M9 16a11 11 0 0 1 14 0M13 20a5 5 0 0 1 6 0"/><circle cx="16" cy="24" r="1.5" fill="currentColor" stroke="none"/></svg></div><strong data-i18n="emptyTitle">A little quiet here</strong><p id="empty-text" data-i18n="emptyText">Connect your device to begin exploring.</p></div></div></section>
+        <section id="functions" class="command-page" data-view aria-labelledby="basic-heading">
+          <header class="command-heading">
+            <h1 id="basic-heading" data-i18n="functionTitle">Basic commands</h1>
+            <p data-i18n="functionDescription">Set options on each card, preview the command, and run it on the device.</p>
+          </header>
+          <nav class="command-jumps" data-label="functionGroups" aria-label="Command groups">
+            <button type="button" data-jump="basic-wifi" data-i18n="wifiBasic">Wi-Fi observation</button>
+            <button type="button" data-jump="basic-lists" data-i18n="wifiLists">Results and selection</button>
+            <button type="button" data-jump="basic-radio" data-i18n="radioControl">Channels</button>
+            <button type="button" data-jump="basic-ble" data-i18n="group_ble">Bluetooth</button>
+            <button type="button" data-jump="basic-device" data-i18n="deviceControl">Device controls</button>
+          </nav>
+          <section class="command-group" id="basic-wifi"><h2 data-i18n="wifiBasic">Wi-Fi observation</h2><div class="operation-grid" data-operation-group="wifiBasic"></div></section>
+          <section class="command-group" id="basic-lists"><h2 data-i18n="wifiLists">Results and selection</h2><div class="operation-grid" data-operation-group="wifiLists"></div><div class="band-links"><a class="command-link" href="#networks" data-i18n="networkTitle">Wi-Fi results</a><a class="command-link" href="#advanced" data-jump-target="advanced-lan" data-i18n="lan">Wi-Fi join & LAN</a></div></section>
+          <section class="command-group" id="basic-radio"><h2 data-i18n="radioControl">Channels</h2><div class="operation-grid" data-operation-group="radioControl"></div></section>
+          <section class="command-group" id="basic-ble"><h2 data-i18n="group_ble">Bluetooth</h2><div class="operation-grid" data-operation-group="group_ble"></div>
+            <div id="bluetooth-results" class="bluetooth-results" hidden><div class="bluetooth-result-tools"><h3 data-i18n="bluetoothResults">Bluetooth results</h3><button id="export-bluetooth" class="text-button" disabled data-i18n="exportResults">Export CSV</button></div><div class="table-wrap"><table><thead><tr><th data-i18n="index">Device index</th><th data-i18n="bleName">DEVICE</th><th data-i18n="signal">SIGNAL ↕</th></tr></thead><tbody id="bluetooth-rows"></tbody></table></div></div>
+          </section>
+          <section class="command-group" id="basic-device"><h2 data-i18n="deviceControl">Device controls</h2><div class="operation-grid" data-operation-group="deviceControl"></div></section>
+        </section>
+        <section id="advanced" class="command-page" data-view hidden aria-labelledby="advanced-heading">
+          <header class="command-heading">
+            <h1 id="advanced-heading" data-i18n="advancedPage">Advanced tools</h1>
+            <p data-i18n="advancedDescription">Inspect both Wi-Fi bands, diagnose your equipment, or save a capture to this computer.</p>
+          </header>
+          <nav class="command-jumps" data-label="functionGroups" aria-label="Tool groups">
+            <button type="button" data-jump="advanced-bands" data-i18n="dualBand">Dual-band survey</button>
+            <button type="button" data-jump="advanced-motion" data-i18n="motion">Motion sensing</button>
+            <button type="button" data-jump="advanced-lan" data-i18n="lan">Wi-Fi join & LAN</button>
+            <button type="button" data-jump="advanced-detectors" data-i18n="detectors">Wireless detectors</button>
+            <button type="button" data-jump="advanced-signal" data-i18n="signalFind">Signal finder</button>
+            <button type="button" data-jump="capture-panel" data-i18n="captureTitle">USB packet capture</button>
+            <button type="button" data-jump="advanced-gps" data-i18n="group_gps">GPS</button>
+          </nav>
+          <section class="command-group" id="advanced-bands">
+            <h2 data-i18n="dualBand">Dual-band survey</h2>
+            <p data-i18n="dualDescription">Sweep with channel hopping on, then compare the two bands in Wi-Fi results.</p>
+            <div class="operation-grid" data-operation-group="dualBand"></div>
+            <div class="band-links">
+              <a class="command-link" href="#networks" data-result-band="2.4">2.4 GHz <span id="band-count-24">0</span></a>
+              <a class="command-link" href="#networks" data-result-band="5">5 GHz <span id="band-count-5">0</span></a>
+            </div>
+          </section>
+          <section class="command-group" id="advanced-motion"><h2 data-i18n="motion">Motion sensing (CSI)</h2><p data-i18n="motionDescription">Choose your own access point and keep the board still for the first 30 seconds.</p><div class="operation-grid" data-operation-group="motion"></div><output aria-live="off" class="device-reading" id="motion-reading"></output></section>
+          <section class="command-group" id="advanced-lan">
+            <h2 data-i18n="lan">Wi-Fi join & LAN</h2>
+            <p data-i18n="lanDescription">Connect to your own Wi-Fi network and inspect hosts on its LAN. Check the authorization box below first: pick a scanned network or enter a Wi-Fi name and password in Connect & save Wi-Fi to store credentials on the board, then reuse Join saved Wi-Fi anytime.</p>
+            <div id="wifi-status-card" class="wifi-status-card" role="status" aria-live="polite">
+              <div class="wifi-status-main">
+                <div class="wifi-status-heading">
+                  <span id="wifi-status-dot" class="dot"></span>
+                  <strong data-i18n="wifiConnectionLabel">Board Wi-Fi status</strong>
+                  <span id="wifi-status-badge" class="badge" data-i18n="disconnected">Disconnected</span>
+                </div>
+                <p id="wifi-status-detail" class="wifi-status-detail" data-i18n="wifiStatusDisconnectedHint">Connect your device to check or join a Wi-Fi network.</p>
+              </div>
+              <div class="wifi-status-actions">
+                <button type="button" id="wifi-status-refresh" class="button secondary" disabled data-i18n="wifiCheckStatus">Check status</button>
+                <button type="button" id="wifi-disconnect" class="button secondary" hidden disabled data-i18n="wifiDisconnect">Disconnect Wi-Fi</button>
+              </div>
+            </div>
+            <label class="operation-check lan-check"><input type="checkbox" id="lan-authorized"><span data-i18n="lanAuthorized">I am authorized to inspect this network.</span></label>
+            <div class="operation-grid" data-operation-group="lan"></div>
+            <output aria-live="off" class="device-reading" id="lan-hosts-reading" hidden></output>
+          </section>
+          <section class="command-group" id="advanced-detectors"><h2 data-i18n="detectors">Wireless detectors</h2><p data-i18n="detectorsDescription">Review broadcasts and wireless events in the serial monitor.</p><div class="operation-grid" data-operation-group="detectors"></div></section>
+          <section class="command-group" id="advanced-signal"><h2 data-i18n="signalFind">Wi-Fi signal finder</h2><p data-i18n="signalDescription">Choose your own access point. A reading closer to 0 dBm means a stronger signal.</p><div class="operation-grid" data-operation-group="signalFind"></div><output aria-live="off" class="device-reading" id="signal-reading"></output></section>
+          <section id="capture-panel" class="capture-module" aria-labelledby="capture-heading">
+            <h2 id="capture-heading" data-i18n="captureTitle">USB packet capture</h2>
+            <p data-i18n="captureDescription">Record traffic from your own network to this computer.</p>
+            <form id="capture-form">
+            <div class="action-fields"><label><span data-i18n="captureNetwork">Network</span><select id="capture-network" required></select></label><label><span data-i18n="captureMode">Observation mode</span><select id="capture-mode"><option value="packetcount" data-i18n="packetcount">Packet counts</option><option value="sniffbeacon" data-i18n="sniffbeacon">Network announcements</option><option value="sniffprobe" data-i18n="sniffprobe">Network discovery requests</option><option value="sniffraw" data-i18n="sniffraw">Raw frame observation</option></select></label><label><span data-i18n="captureDuration">Duration</span><select id="capture-duration"><option value="30">30 s</option><option value="60">60 s</option><option value="300">300 s</option><option value="0" data-i18n="captureUntilStopped">Until stopped</option></select></label></div>
+            <div class="action-submit"><span id="capture-status" role="status"></span><div class="actions"><button id="capture-start" class="button primary" disabled data-i18n="captureStart">Start capture</button><button id="capture-save" type="button" class="button secondary" disabled data-i18n="captureSave">Save PCAP</button></div></div></form>
+            <p data-i18n="captureScope">Packet counts use the selected network. Other modes observe frames on its channel.</p>
+            </section>
+          <section class="command-group" id="advanced-gps"><h2 data-i18n="group_gps">GPS</h2><p data-i18n="gpsRequired">Connect an external GPS module to use these operations.</p><div class="operation-grid" data-operation-group="group_gps"></div></section>
+        </section>
+        <footer><span>XIAO CONTROL CENTER</span><span data-i18n="footer">Made for a clearer view.</span></footer>
+      </div>
+      <div id="monitor-splitter" class="monitor-splitter" role="separator" tabindex="0" aria-orientation="vertical" aria-controls="workspace-content console" aria-valuemin="25" aria-valuemax="60" aria-valuenow="36" data-label="resizeMonitor" aria-label="Resize serial monitor"></div>
+      <section id="console" class="serial-monitor" aria-labelledby="monitor-title">
+    <header class="monitor-header"><div class="monitor-identity"><span class="monitor-symbol">›_</span><div><h2 id="monitor-title" data-i18n="consoleTitle">Serial monitor</h2><span id="monitor-status">Disconnected</span></div></div><div class="monitor-header-actions"><button type="button" class="monitor-focus" data-open-monitor data-i18n="openMonitor">Command input</button><button id="monitor-expand" class="icon-button" data-label="expandMonitor" aria-label="Widen serial monitor" aria-pressed="false">↔</button></div></header>
+    <div class="monitor-toolbar"><label><input id="auto-scroll" type="checkbox" checked><span data-i18n="autoScroll">Auto-scroll</span></label><select id="log-filter" data-label="logFilter" aria-label="Log filter"><option value="all" data-i18n="allMessages">All messages</option><option value="device" data-i18n="deviceMessages">Device only</option><option value="commands" data-i18n="sentCommands">Sent commands</option></select><div class="font-controls"><button id="font-smaller" data-label="smallerFont" aria-label="Smaller font">A−</button><span id="font-size">12px</span><button id="font-larger" data-label="largerFont" aria-label="Larger font">A+</button></div><div class="monitor-log-actions"><button id="monitor-stop" disabled data-i18n="stopTask">Stop task</button><button id="export-log" data-i18n="exportLog">Save log</button><button id="clear-log" data-i18n="clearLog">Clear log</button></div></div>
+    <div id="log" class="log" role="log" tabindex="0" aria-live="off" data-filter="all"><div class="log-placeholder" data-i18n="logEmpty">Device messages will appear here.</div></div>
+    <form id="command-form" class="command-form"><span class="prompt">›</span><input id="command" autocomplete="off" spellcheck="false" data-placeholder="commandPlaceholder" placeholder="Enter a supported command" disabled aria-label="Command"><button class="send" type="submit" disabled data-i18n="send">Send</button></form><div class="monitor-footer"><span data-i18n="monitorInstructions">Drag the divider to resize · ↑ command history</span><span id="log-count">0</span></div>
+      </section>
+      <aside id="network-detail" class="detail-panel" hidden aria-labelledby="detail-title"><header><h2 id="detail-title" data-i18n="networkDetails">Network details</h2><button id="detail-close" class="icon-button" data-label="closeDetails" aria-label="Close details">×</button></header><h3 id="detail-name"></h3><dl id="detail-fields"></dl></aside>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

@@ -24,6 +24,10 @@ Download the [latest release](https://github.com/justcallmekoko/ESP32Marauder/re
 
 Check out the project [wiki](https://github.com/justcallmekoko/ESP32Marauder/wiki) for a full overview of the ESP32 Marauder
 
+## Browser Control Console
+
+The [XIAO Control console](xiao-console/README.md) connects to XIAO ESP32-C5 over USB in Chrome or Edge, with English and Simplified Chinese controls for Wi-Fi scanning, network results, and device logs.
+
 ## FCC module identifiers
 
 The Device Info screen reports the FCC ID of the radio module fitted to supported JustCallMeKoko hardware. This is the module identifier, not a claim that every carrier-board or enclosure configuration has a separate end-product grant.
